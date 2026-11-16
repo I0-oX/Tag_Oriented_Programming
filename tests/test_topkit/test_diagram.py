@@ -29,41 +29,92 @@ from ._fixtures import Elf
 LINKS = "game.links"               # a module name that does not depend on how tests run
 
 
-def _nodes(text: str) -> dict[str, str]:
-    """Node id → first label line, its markup removed, for Mermaid or DOT."""
+def _lanes(text: str) -> dict[str, str]:
+    """Mermaid lane id → title, for the host and each Tag (not modules)."""
 
-    found = re.findall(r'^\s+(\w+)(?:\(\[|\(|\{\{|>)"([^"]*)"(?:\]\)|\)|\}\}|\])$', text, re.M)
-    found += re.findall(r"^\s+(\w+) \[label=<(.*?)>(?:,|\];)", text, re.M)
+    return dict(re.findall(r'^\s+subgraph (host|t\d+)\["([^"]*)"\]$', text, re.MULTILINE))
 
-    return {
-            node: re.sub(r"<[^>]*>", "", re.split(r"<br>|<BR/>", label)[0])
-            for node, label in found
-            }
+
+def _rows(text: str, lane: str) -> list[str]:
+    """The labels of a Mermaid lane's rows, in order."""
+
+    return re.findall(rf'^\s+{lane}_\d+(?:\{{\{{|\[|\()"([^"]*)"(?:\}}\}}|\]|\))$', text, re.MULTILINE)
 
 
 def _arrows(text: str) -> list[tuple[str, str, str]]:
-    """(source, label, shape) for each arrow, in order; a solid arrow's label is ""."""
+    """(source, label, shape) for each Mermaid lane arrow; solid is ""."""
 
-    mermaid = re.findall(r"^  (\w+) (?:-->|-\.->\|(\w+)\|) (\w+)$", text, re.M)
-    dot = [
-            (a, b, label)
+    return re.findall(r"^  (\w+) (?:-->|-\.->\|(\w+)\|) (\w+)$", text, re.MULTILINE)
+
+
+def _titles(dot: str) -> dict[str, str]:
+    """DOT node id → the title of its box, markup removed."""
+
+    return {
+            node: re.sub(r"<[^>]*>", "", title)
+            for node, title in re.findall(r'^\s+(\w+) \[label=<<TABLE.*?<TD ALIGN="CENTER">(.*?)</TD>', dot, re.MULTILINE)
+            }
+
+
+def _dot_arrows(dot: str) -> list[tuple[str, str, str]]:
+    return [
+            (a, label, b)
             for a, b, label in re.findall(
-                    r'^  (\w+) -> (\w+)(?: \[style=dashed, label=" (\w+) "\])?;$', text, re.M,
+                    r'^  (\w+) -> (\w+)(?: \[style=dashed, label=" (\w+) "\])?;$', dot, re.MULTILINE,
                     )
             ]
 
-    return [*((a, label, b) for a, label, b in mermaid), *((a, label, b) for a, b, label in dot)]
+
+def _modules(text: str) -> dict[str, list[str]]:
+    """Mermaid module box → the titles of the lanes inside it."""
+
+    lanes = _lanes(text)
+
+    return {
+            module: [lanes[lane] for lane in re.findall(r"^    subgraph (t\d+)\[", body, re.MULTILINE)]
+            for module, body in re.findall(r'^  subgraph m\d+\["([^"]*)"\]\n(.*?)^  end$', text, re.MULTILINE | re.DOTALL)
+            }
 
 
-def _boxes(text: str) -> dict[str, list[str]]:
-    """Module box name → the node ids inside it, for Mermaid."""
+def _named(text: str) -> set[tuple[str, str, str]]:
+    lanes = _lanes(text)
+    return {(lanes[a], label, lanes[b]) for a, label, b in _arrows(text)}
 
-    boxes: dict[str, list[str]] = {}
 
-    for module, body in re.findall(r'^  subgraph \w+\["([^"]*)"\]\n(.*?)^  end$', text, re.M | re.DOTALL):
-        boxes[module] = re.findall(r'^    (\w+)\W', body, re.M)
+class Hero:
+    def __init__(self) -> None:
+        self.name = "Ari"
 
-    return boxes
+
+class Kin(Tag):
+    @Record
+    def spells(agent) -> list[str]:
+        return ["Light"]
+
+    def Greet(agent) -> str:
+        return "hi"
+
+
+class Mage(Tag):
+    @Post
+    def Has_Spells(agent) -> bool:
+        return len(agent.spells) > 0
+
+    @Record
+    def spells(agent, stored) -> list[str]:
+        return stored + ["Bolt"]
+
+    def Greet(agent) -> str:
+        return "yo"
+
+
+def _mage() -> Hero:
+    ari = Hero()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        Kin(ari)
+        Mage(ari)
+    return ari
 
 
 class DiagramTests(unittest.TestCase):
@@ -72,7 +123,7 @@ class DiagramTests(unittest.TestCase):
         Bridge(ari)
         Elf(ari)
 
-        expected = [
+        expected = {
                 ("Agent", "", "Root"),
                 ("Root", "", "Left"),
                 ("Root", "", "Right"),
@@ -80,17 +131,63 @@ class DiagramTests(unittest.TestCase):
                 ("Right", "", "Bridge"),
                 ("Agent", "", "Person"),
                 ("Person", "", "Elf"),
-                ]
+                }
 
-        for format in ("mermaid", "graphviz"):
-            (text,) = Diagram(ari, format=format).values()
-            names = _nodes(text)
+        (text,) = Diagram(ari).values()
+        (dot,) = Diagram(ari, format="graphviz").values()
+        titles = _titles(dot)
 
-            self.assertCountEqual(
-                    [(names[a], label, names[b]) for a, label, b in _arrows(text)],
-                    expected,
-                    format,
-                    )
+        self.assertEqual(_named(text), expected)
+        self.assertEqual({(titles[a], label, titles[b]) for a, label, b in _dot_arrows(dot)}, expected)
+
+    def test_each_row_says_what_the_tag_declares_and_what_it_holds(self) -> None:
+        ari = _mage()
+
+        (text,) = Diagram(ari).values()
+        lanes = {title: lane for lane, title in _lanes(text).items()}
+
+        self.assertEqual(_rows(text, lanes["Hero"]), ["name = 'Ari'"])     # host fields only
+        self.assertEqual(_rows(text, lanes["Kin"]), ["Record spells", "Action Greet"])
+        self.assertEqual(
+                _rows(text, lanes["Mage"]),
+                [
+                    "Post Has_Spells · holds",
+                    "Record spells = ['Light', 'Bolt']<br><i>underlay Kin</i>",
+                    "Action Greet<br><i>replaces Kin</i>",
+                    ],
+                )
+
+    def test_graphviz_draws_each_layering_as_a_link_between_rows(self) -> None:
+        ari = _mage()
+
+        (dot,) = Diagram(ari, format="graphviz").values()
+        ids = {title: node for node, title in _titles(dot).items()}
+
+        self.assertIn("Record</FONT> spells = [&#x27;Light&#x27;, &#x27;Bolt&#x27;]".replace("&#x27;", "'"), dot)
+        self.assertRegex(
+                dot,
+                rf'{ids["Mage"]}:m1 -> {ids["Kin"]}:m0 \[style=dotted, constraint=false, .*label=" underlay "\]',
+                )
+        self.assertRegex(
+                dot,
+                rf'{ids["Mage"]}:m2 -> {ids["Kin"]}:m1 \[.*arrowhead=tee, label=" replaces "\]',
+                )
+
+    def test_a_layering_into_another_chart_stays_as_words(self) -> None:
+        Low = type("Low", (Tag,), {"__module__": "game.low", "Speak": lambda agent: "a"})
+        High = type("High", (Tag,), {"__module__": "game.high", "Speak": lambda agent: "b"})
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Low(ari)
+            High(ari)
+
+        parts = Diagram(ari, limit=1)
+        dots = Diagram(ari, limit=1, format="graphviz")
+
+        self.assertIn('"Action Speak<br><i>replaces Low</i>"', parts["game.high"])
+        self.assertIn("<I>replaces Low</I>", dots["game.high"])
+        self.assertNotIn(":m0 ->", dots["game.high"])
 
     def test_direction_heads_the_chart(self) -> None:
         ari = Agent()
@@ -99,7 +196,7 @@ class DiagramTests(unittest.TestCase):
         (mermaid,) = Diagram(ari, direction="LR").values()
         (dot,) = Diagram(ari, direction="TD", format="graphviz").values()
 
-        self.assertTrue(mermaid.startswith("flowchart LR\n"))
+        self.assertIn("\nflowchart LR\n", mermaid)
         self.assertIn("rankdir=TB", dot)
 
     def test_each_module_of_a_chart_is_a_box(self) -> None:
@@ -111,14 +208,12 @@ class DiagramTests(unittest.TestCase):
         Sage(ari)
 
         (text,) = Diagram(ari).values()
-        names = _nodes(text)
+        (dot,) = Diagram(ari, format="graphviz").values()
 
         self.assertEqual(
-                {module: [names[n] for n in ids] for module, ids in _boxes(text).items()},
+                _modules(text),
                 {"game.species": ["Species"], "game.feats": ["Elf"], "game.backgrounds": ["Sage"]},
                 )
-
-        (dot,) = Diagram(ari, format="graphviz").values()
         self.assertEqual(dot.count("subgraph cluster_"), 3)
 
     def test_a_chart_of_one_module_has_no_box(self) -> None:
@@ -128,7 +223,7 @@ class DiagramTests(unittest.TestCase):
         (text,) = Diagram(ari).values()
         (dot,) = Diagram(ari, format="graphviz").values()
 
-        self.assertEqual(_boxes(text), {})
+        self.assertEqual(_modules(text), {})
         self.assertNotIn("subgraph", dot)
 
     def test_the_limit_is_soft_a_family_is_never_split(self) -> None:
@@ -145,7 +240,7 @@ class DiagramTests(unittest.TestCase):
 
         parts = Diagram(ari, limit=4)
         drawn = [
-                [name for n, name in _nodes(part).items() if n != "host"]
+                [title for lane, title in _lanes(part).items() if lane != "host"]
                 for part in parts.values()
                 ]
 
@@ -158,7 +253,7 @@ class DiagramTests(unittest.TestCase):
                     [loose[4].__name__],
                     ],
                 )
-        self.assertIn(f'host(["Agent<br>{LINKS} (2)"])', parts[f"{LINKS} (2)"])
+        self.assertIn(f'subgraph host["Agent · {LINKS} (2)"]', parts[f"{LINKS} (2)"])
 
     def test_a_family_is_drawn_with_the_module_of_its_top_base(self) -> None:
         Species = type("Species", (Tag,), {"__module__": "game.species"})
@@ -173,7 +268,7 @@ class DiagramTests(unittest.TestCase):
 
         self.assertEqual(
                 {
-                    name: [label for n, label in _nodes(part).items() if n != "host"]
+                    name: [title for lane, title in _lanes(part).items() if lane != "host"]
                     for name, part in parts.items()
                     },
                 {
@@ -194,10 +289,15 @@ class DiagramTests(unittest.TestCase):
 
         (text,) = Diagram(ari).values()
         (dot,) = Diagram(ari, format="graphviz").values()
+        lanes = {title: lane for lane, title in _lanes(text).items()}
 
-        self.assertIn('("Bruiser<br>Post: Strength_Capped BROKEN")', text)
-        self.assertIn('("Capped<br>Post: Strength_Capped")', text)
-        self.assertRegex(dot, r"label=<Bruiser<BR/>.*Strength_Capped BROKEN.*>, shape=box, color=\"#e5484d\"")
+        self.assertEqual(
+                _rows(text, lanes["Bruiser"]),
+                ["Post Strength_Capped · BROKEN<br><i>replaces Capped</i>"],
+                )
+        self.assertEqual(_rows(text, lanes["Capped"]), ["Post Strength_Capped"])
+        self.assertIn(f"  class {lanes['Bruiser']} broken", text)
+        self.assertIn("Post Strength_Capped BROKEN", dot)
 
     def test_a_ripped_tag_stays_dashed(self) -> None:
         ari = Agent()
@@ -205,10 +305,10 @@ class DiagramTests(unittest.TestCase):
         del Elf[ari]
 
         (text,) = Diagram(ari).values()
-        ids = {name: n for n, name in _nodes(text).items()}
+        lanes = {title: lane for lane, title in _lanes(text).items()}
 
-        self.assertIn(f"  host -.->|ripped| {ids['Elf']}", text)
-        self.assertIn(f"  class {ids['Elf']} ripped", text)
+        self.assertIn(f"  host -.->|ripped| {lanes['Elf']}", text)
+        self.assertIn(f"  class {lanes['Elf']} ripped", text)
 
     def test_a_base_applied_again_after_its_rip_still_heads_its_family(self) -> None:
         Base_Again = type("Base_Again", (Tag,), {"__module__": "game.bases"})
@@ -221,15 +321,14 @@ class DiagramTests(unittest.TestCase):
         Base_Again(ari)                                               # now after its Shape
 
         (text,) = Diagram(ari).values()
-        names = _nodes(text)
 
-        self.assertCountEqual(
-                [(names[a], label, names[b]) for a, label, b in _arrows(text)],
-                [
+        self.assertEqual(
+                _named(text),
+                {
                     ("Agent", "", "Base_Again"),
                     ("Base_Again", "", "Shape_Kept"),
                     ("Agent", "", "Other"),
-                    ],
+                    },
                 )
         self.assertEqual(list(Diagram(ari, limit=1)), ["game.bases", "game.other"])
 
@@ -247,11 +346,11 @@ class DiagramTests(unittest.TestCase):
         lance.keeps_secret = False                                    # the lifetime term breaks
 
         (text,) = Diagram(lance).values()
-        ids = {name: n for n, name in _nodes(text).items()}
+        lanes = {title: lane for lane, title in _lanes(text).items()}
 
-        self.assertIn('("Intelligence<br>Post: NDA (constant) BROKEN")', text)
-        self.assertIn(f"  host -.->|ripped| {ids['Intelligence']}", text)
-        self.assertIn(f"  class {ids['Intelligence']} broken", text)
+        self.assertEqual(_rows(text, lanes["Intelligence"]), ["Post NDA (constant) · BROKEN"])
+        self.assertIn(f"  host -.->|ripped| {lanes['Intelligence']}", text)
+        self.assertIn(f"  class {lanes['Intelligence']} broken", text)
 
     def test_a_tag_draws_its_form_and_its_pins(self) -> None:
         class Rare(Pin):
@@ -259,47 +358,37 @@ class DiagramTests(unittest.TestCase):
             def rarity(tag) -> str:
                 return "rare"
 
-        class Hero(Elf):
+        class Hero_Tag(Elf):
             pass
 
-        Rare(Hero)
-        (text,) = Diagram(Hero).values()
-        names = _nodes(text)
+        Rare(Hero_Tag)
+        (text,) = Diagram(Hero_Tag).values()
+        lanes = {title: lane for lane, title in _lanes(text).items()}
 
-        self.assertNotIn("host", names)
-        self.assertCountEqual(
-                [(names[a], label, names[b]) for a, label, b in _arrows(text)],
-                [("Person", "", "Elf"), ("Elf", "", "Hero"), ("Hero", "pins", "Rare")],
+        self.assertNotIn("host", _lanes(text))
+        self.assertEqual(
+                _named(text),
+                {("Person", "", "Elf"), ("Elf", "", "Hero_Tag"), ("Hero_Tag", "pins", "Rare · Pin")},
                 )
-        rare = next(n for n, v in names.items() if v == "Rare")
-        self.assertIn(f'  {rare}{{{{"Rare<br>Record: rarity"}}}}', text)            # a hexagon
-        self.assertIn(f"  class {rare} pin", text)
+        self.assertEqual(_rows(text, lanes["Rare · Pin"]), ["Record rarity"])
+        self.assertIn(f"  class {lanes['Rare · Pin']} pin", text)
+        self.assertEqual(_rows(text, lanes["Elf"]), ["Action Attack<br><i>underlay Person</i>"])
 
-    def test_what_a_tag_is_picks_its_box(self) -> None:
+    def test_what_a_tag_is_names_and_colors_its_box(self) -> None:
         @Flag
         class Inspired(Tag):
             pass
 
-        class Rare(Pin):
-            pass
-
-        class Hero(Tag):
-            pass
-
-        Rare(Hero)
         ari = Agent()
-        Hero(ari)
         Inspired(ari)
 
         (text,) = Diagram(ari).values()
         (dot,) = Diagram(ari, format="graphviz").values()
-        (pinned,) = Diagram(Hero, format="graphviz").values()
+        lanes = {title: lane for lane, title in _lanes(text).items()}
 
-        self.assertRegex(text, r'\n  t\d+\("Hero"\)\n')                   # rounded
-        self.assertRegex(text, r'\n  t\d+>"Inspired"\]\n')                # a flag
-        self.assertRegex(dot, r"label=<Hero>, shape=box\]")
-        self.assertRegex(dot, r"label=<Inspired>, shape=cds, ")
-        self.assertRegex(pinned, r"label=<Rare>, shape=hexagon, ")
+        self.assertIn(f"  class {lanes['Inspired · Flag']} flag", text)
+        self.assertIn("Inspired<FONT POINT-SIZE", dot)
+        self.assertIn(' · Flag</FONT></FONT></TD></TR></TABLE>>, color="#0d9488"', dot)
 
     def test_a_tag_and_its_pins_are_one_family_never_divided(self) -> None:
         class Rare(Pin):
@@ -313,28 +402,26 @@ class DiagramTests(unittest.TestCase):
 
         Rarer(Solo)
         (name, text), = Diagram(Solo, limit=1).items()
-        names = _nodes(text)
 
         self.assertEqual(name, "Solo")
-        self.assertEqual(list(names.values()), ["Solo", "Rare", "Rarer"])  # not the root Tag
-        self.assertCountEqual(
-                [(names[a], label, names[b]) for a, label, b in _arrows(text)],
-                [("Rare", "", "Rarer"), ("Solo", "pins", "Rare")],
-                )
+        self.assertEqual(list(_lanes(text).values()), ["Solo", "Rare · Pin", "Rarer · Pin"])  # not the root
+        self.assertEqual(_named(text), {("Rare · Pin", "", "Rarer · Pin"), ("Solo", "pins", "Rare · Pin")})
 
     def test_labels_cannot_break_out_of_their_box(self) -> None:
         odd = type('Odd"<b>&#', (), {})
         (text,) = Diagram(odd()).values()
         (dot,) = Diagram(odd(), format="graphviz").values()
 
-        self.assertIn('host(["Odd#quot;#lt;b#gt;&#35;"])', text)
+        self.assertIn('subgraph host["Odd#quot;#lt;b#gt;&#35;"]', text)
         self.assertIn('digraph "Odd\\"<b>&#" {', dot)
-        self.assertIn("host [label=<Odd&quot;&lt;b&gt;&amp;#>,", dot)
+        self.assertIn('<TD ALIGN="CENTER">Odd&quot;&lt;b&gt;&amp;#</TD>', dot)
 
     @unittest.skipUnless(shutil.which("dot"), "Graphviz is not installed")
     def test_graphviz_reads_every_chart(self) -> None:
         odd = type('Odd"<b>&#\\', (Tag,), {"__module__": 'game "odd"'})
-        ari = Agent()
+        ari = _mage()
+        ari.note = '<"&>'
+        ari.events = []
         Bridge(ari)
         odd(ari)
         del Bridge[ari]

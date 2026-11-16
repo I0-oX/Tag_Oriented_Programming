@@ -7,11 +7,16 @@ Graphviz ``.dot`` with ``format="graphviz"``; both need nothing outside the
 standard library. With ``format="graphviz"``, ``Save(..., image="svg")`` or
 ``image="png"`` also draws each file with Graphviz's ``dot`` command.
 
-Each Tag box lists the Contributions and conditions the Tag declares itself.
-An arrow runs from a Base to its Shape, in Forming order. On an Agent, the
-host points at each Tag without an active Base, a broken Postcondition is
-marked, and Ripped Tags stay as dashed boxes. On a Tag, its Pins hang from
-it. When a chart holds Tags of several modules, each module is a box.
+Each Tag is a box holding one row for each Contribution or condition it
+declares itself, kind first: ``Record spells = ['Light']``, ``Action
+Attack``, ``Post Has_Book``. On an Agent, a Record shows the value it holds
+now, on the Layer that supplied it, and a Post shows whether it holds; the
+host's box lists its own fields. An arrow runs from a Base to its Shape;
+where two Layers give the same name, a dotted arrow runs from the later to
+the earlier one: ``underlay`` when the later extends it, ``replaces`` or
+``deletes`` when it covers it. Ripped Tags stay as dashed boxes, a Tag's
+Pins hang from it, and when a chart holds Tags of several modules, each
+module is a box.
 
 A diagram with more Tags than ``limit`` is divided by code: each family of
 Tags joined through Bases goes to the module that declares its top Base,
@@ -24,9 +29,11 @@ a module still above the limit is split, between families, into
 from __future__ import annotations
 
 import re
+import reprlib
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
 
@@ -36,6 +43,7 @@ from .declarations import _declarations_of
 from .declarations import _has_flag
 from .declarations import _is_flag
 from .declarations import _is_pin
+from .declarations import _takes_stored
 from .geometry import _direct_bases
 from .geometry import _form_of
 from .geometry import _is_tag
@@ -63,50 +71,59 @@ _HTML_ESCAPES = {
 # theme, and a fill fixed for a light page leaves a dark theme's text
 # unreadable, and the reverse.
 _MERMAID_STYLES = {
-        "host": "stroke-width:3px",
+        "host": "stroke:#64748b,stroke-width:2px",
+        "field": "stroke:#94a3b8",
         "pin": "stroke:#d4a017,stroke-width:2px",
         "flag": "stroke:#0d9488,stroke-width:2px",
-        "broken": "stroke:#e5484d,stroke-width:3px,color:#e5484d",
+        "broken": "stroke:#e5484d,stroke-width:2px,color:#e5484d",
         "ripped": "stroke:#8b8b8b,stroke-dasharray:6 3,color:#8b8b8b",
         "module": "fill:none,stroke:#94a3b8,stroke-dasharray:4 4",
+        "check": "stroke:#2563eb",
+        "data": "stroke:#059669",
+        "act": "stroke:#7c3aed",
+        "none": "fill:none,stroke:none",
         }
-# What a Tag is picks its box: rounded for a Tag, a hexagon for a Pin, a
-# flag for a Flag.
+# Each member kind by what it does: checks, state, behaviour.
+_FAMILY = {
+        "Pre": "check",
+        "Post": "check",
+        "Imprint": "check",
+        "Record": "data",
+        "Report": "data",
+        "Action": "act",
+        "Operation": "act",
+        "Rip": "act",
+        "Delete": "act",
+        }
+_COLORS = {"check": "#2563eb", "data": "#059669", "act": "#7c3aed"}
+# A row's box in Mermaid: checks are hexagons, state is square, behaviour
+# is rounded.
 _MERMAID_SHAPES = {
-        "tag": ("(", ")"),
-        "pin": ("{{", "}}"),
-        "flag": (">", "]"),
+        "check": ("{{", "}}"),
+        "data": ("[", "]"),
+        "act": ("(", ")"),
         }
+_LINK_COLORS = {"underlay": "#7c3aed", "replaces": "#d97706", "deletes": "#e5484d"}
+# Names that layer on an Agent, so a later Tag can extend or cover them.
+_OVERLAID = frozenset(("Record", "Action", "Rip", "Post", "Delete"))
+_REPR = reprlib.Repr(
+        maxstring=30, maxother=30, maxlong=30,
+        maxlist=4, maxtuple=4, maxset=4, maxfrozenset=4, maxdict=3, maxlevel=2,
+        )
+_MISSING = object()
 # Graphviz draws its own page, so the look is fixed: soft lines, rounded boxes.
 _RANKDIR = {"TD": "TB"}
 _FONT = 'fontname="Helvetica,Arial,sans-serif"'
-_DOT_GRAPH = f"{_FONT}, nodesep=0.3, ranksep=0.45, fontsize=11"
-_DOT_NODE = f'shape=box, style=rounded, {_FONT}, fontsize=11, color="#64748b", margin="0.16,0.07"'
+_DOT_GRAPH = f"{_FONT}, nodesep=0.35, ranksep=0.5, fontsize=11"
+_DOT_NODE = f'shape=box, style=rounded, {_FONT}, fontsize=11, color="#64748b", margin="0.12,0.06"'
 _DOT_EDGE = f'{_FONT}, fontsize=9, color="#64748b", fontcolor="#64748b", arrowsize=0.7'
-_DOT_SHAPES = {
-        "tag": "shape=box",
-        "pin": "shape=hexagon",
-        "flag": "shape=cds",
-        }
 _DOT_LOOKS = {
-        "host": 'penwidth=2.2, color="#334155"',
+        "host": 'color="#334155", penwidth=1.8',
         "pin": 'color="#d4a017", penwidth=1.6',
         "flag": 'color="#0d9488", penwidth=1.6',
-        "broken": 'color="#e5484d", fontcolor="#e5484d", penwidth=2',
+        "broken": 'color="#e5484d", penwidth=2',
         "ripped": 'style="rounded,dashed", color="#8b8b8b", fontcolor="#8b8b8b"',
         "module": 'style="rounded,dashed", color="#94a3b8", fontcolor="#64748b"',
-        }
-# Each member kind by what it does: checks, state, behaviour.
-_DOT_MEMBER_COLORS = {
-        "Pre": "#2563eb",
-        "Post": "#2563eb",
-        "Imprint": "#2563eb",
-        "Record": "#059669",
-        "Report": "#059669",
-        "Action": "#7c3aed",
-        "Operation": "#7c3aed",
-        "Rip": "#7c3aed",
-        "Delete": "#7c3aed",
         }
 
 
@@ -116,52 +133,78 @@ def _text(
     return "".join(_ESCAPES.get(c, c) for c in text)
 
 
+@dataclass(frozen=True, slots=True)
+class _Member:
+    """One row of a Tag's box: a declaration the Tag makes itself."""
+
+    kind: str
+    name: str
+    marks: tuple[str, ...]
+    extends: bool    # it receives the earlier contribution of its name
+
+
 def _members(
         tag: type,
-        broken: set[str],
-        ) -> list[tuple[str, str]]:
-    """``(kind, names)`` for each kind of declaration the Tag makes itself."""
+        ) -> list[_Member]:
+    """The declarations the Tag makes itself, conditions first."""
 
     found = _declarations_of(tag)
     rips = set(found.rips)
 
-    def name(member: str, function: object = None, public: bool = False) -> str:
-        marks = []
-
-        if function is not None and _has_flag(function, _UNDERLAY):
-            marks.append("underlay")
-        if member in found.secrets:
-            marks.append("secret")
-        if public or member in found.published:
-            marks.append("public")
-        if member in found.constants:
-            marks.append("constant")
-        if member in found.tools:
-            marks.append("tool")
-
-        return f"{member} ({', '.join(marks)})" if marks else member
-
-    def post(member: str, function: object) -> str:
-        shown = name(member, function)
-        return f"{shown} BROKEN" if member in broken else shown
-
-    kinds = (
-            ("Pre", [name(n, f) for n, f in found.preconditions]),
-            ("Post", [post(n, f) for n, f in found.postconditions]),
-            ("Imprint", [name(n, f) for n, f in found.imprints]),
-            ("Record", [name(n, f) for n, f in found.records]),
-            ("Action", [name(n, f) for n, f in found.actions if n not in rips]),
-            ("Rip", [name(n, f) for n, f in found.actions if n in rips]),
-            ("Delete", [name(n) for n in found.deletions]),
-            ("Report", [name(n, None, p) for n, _, p in found.reports]),
-            ("Operation", [name(n, f, p) for n, f, p in found.operations]),
-            )
+    def member(kind: str, name: str, function: object = None, public: bool = False) -> _Member:
+        marks = [
+                mark
+                for mark, present in (
+                    ("secret", name in found.secrets),
+                    ("public", public or name in found.published),
+                    ("constant", name in found.constants),
+                    ("tool", name in found.tools),
+                    )
+                if present
+                ]
+        if function is None:
+            extends = False
+        elif kind == "Record":
+            extends = _takes_stored(function)
+        else:
+            extends = _has_flag(function, _UNDERLAY)
+        return _Member(kind, name, tuple(marks), extends)
 
     return [
-            (kind, ", ".join(names))
-            for kind, names in kinds
-            if names
+            *(member("Pre", n, f) for n, f in found.preconditions),
+            *(member("Post", n, f) for n, f in found.postconditions),
+            *(member("Imprint", n, f) for n, f in found.imprints),
+            *(member("Record", n, f) for n, f in found.records),
+            *(member("Action", n, f) for n, f in found.actions if n not in rips),
+            *(member("Rip", n, f) for n, f in found.actions if n in rips),
+            *(member("Delete", n) for n in found.deletions),
+            *(member("Report", n, None, p) for n, _, p in found.reports),
+            *(member("Operation", n, None, p) for n, _, p in found.operations),
             ]
+
+
+def _shown(
+        value: object,
+        ) -> str:
+    """A short picture of a value; a failing ``repr`` shows the type."""
+
+    try:
+        text = _REPR.repr(value)
+    except Exception:
+        text = f"<{type(value).__name__}>"
+    return text if len(text) <= 40 else text[:39] + "…"
+
+
+def _namespace(
+        subject: object,
+        ) -> dict:
+    """The subject's own dictionary, read without its attribute hooks."""
+
+    try:
+        namespace = object.__getattribute__(subject, "__dict__")
+    except AttributeError:
+        return {}
+    return namespace if isinstance(namespace, dict) else {}
 
 
 class _Graph:
@@ -202,13 +245,17 @@ class _Graph:
         # A Post name is checked once, on its latest Layer. A Constant Post
         # outlives its Tag's Rip, so that Layer's Tag may be a Ripped one.
         self.broken: dict[type, set[str]] = {}
+        self.status: dict[tuple[type, str], bool] = {}
         verdicts = Contract.Status(subject) if state is not None else {}
 
         for name, holds in verdicts.items():
             layers = state.post_layers.get(name, ())
 
-            if not holds and layers:
-                self.broken.setdefault(layers[-1].tag, set()).add(name)
+            if layers:
+                self.status[layers[-1].tag, name] = holds
+
+                if not holds:
+                    self.broken.setdefault(layers[-1].tag, set()).add(name)
 
         source = _HOST if self.has_host else subject
         carry = None if self.has_host else "pins"
@@ -231,6 +278,55 @@ class _Graph:
             self._add(tag)
             self.ripped.add(tag)
             self.arrows.append((source, tag, "ripped"))
+
+        self.members = {tag: _members(tag) for tag in self.tags}
+        # (later Tag, its row, earlier Tag, its row, how the later covers
+        # it), for each name two active Layers give, in Overlay order: the
+        # Agent's application order, or a Tag's Form.
+        self.links: list[tuple[type, int, type, int, str]] = []
+        latest: dict[str, tuple[type, int]] = {}
+
+        for tag in (active if self.has_host else _form_of(subject)):
+            for index, member in enumerate(self.members.get(tag, ())):
+                if member.kind not in _OVERLAID:
+                    continue
+
+                prior = latest.get(member.name)
+
+                if prior is not None and self.members[prior[0]][prior[1]].kind != "Delete":
+                    relation = (
+                            "deletes" if member.kind == "Delete"
+                            else "underlay" if member.extends
+                            else "replaces"
+                            )
+                    self.links.append((tag, index, *prior, relation))
+
+                latest[member.name] = (tag, index)
+
+        # The value each visible Record holds, and the host's own fields.
+        self.values: dict[tuple[type, str], str] = {}
+        self.fields: list[tuple[str, str]] = []
+
+        if self.has_host:
+            namespace = _namespace(subject)
+
+            for name, (tag, index) in latest.items():
+                member = self.members[tag][index]
+                value = namespace.get(name, _MISSING)
+
+                if member.kind == "Record" and "secret" not in member.marks and value is not _MISSING:
+                    self.values[tag, name] = _shown(value)
+
+            taken = {m.name for rows in self.members.values() for m in rows}
+
+            if state is not None:
+                taken |= {*state.records, *state.actions, *state.deleted}
+
+            self.fields = [
+                    (name, _shown(value))
+                    for name, value in namespace.items()
+                    if isinstance(name, str) and not name.startswith("_") and name not in taken
+                    ]
 
     def _add(
             self,
@@ -354,6 +450,60 @@ def _by_module(
     return modules
 
 
+def _title(
+        tag: type,
+        ) -> str:
+    """A Tag box's title: its name, and what it is when not a plain Tag."""
+
+    kind = _kind(tag)
+    return tag.__name__ if kind == "tag" else f"{tag.__name__} · {kind.title()}"
+
+
+def _row(
+        graph: _Graph,
+        tag: type,
+        member: _Member,
+        ) -> str:
+    """A row's text: kind, name, the value it holds and its marks."""
+
+    text = f"{member.kind} {member.name}"
+    value = graph.values.get((tag, member.name))
+
+    if value is not None:
+        text += f" = {value}"
+    if member.marks:
+        text += f" ({', '.join(member.marks)})"
+    return text
+
+
+def _holds(
+        graph: _Graph,
+        tag: type,
+        member: _Member,
+        ) -> bool | None:
+    """Whether a Post row holds now; None when nothing checks it here."""
+
+    return graph.status.get((tag, member.name)) if member.kind == "Post" else None
+
+
+def _notes(
+        graph: _Graph,
+        part: list[type],
+        every: bool,
+        ) -> dict[tuple[type, int], list[str]]:
+    """How a row covers an earlier Layer, as words on the row: for every
+    link, or only for those whose earlier Layer is in another chart."""
+
+    drawn = set(part)
+    notes: dict[tuple[type, int], list[str]] = {}
+
+    for tag, index, prior, _, relation in graph.links:
+        if tag in drawn and (every or prior not in drawn):
+            notes.setdefault((tag, index), []).append(f"{relation} {prior.__name__}")
+
+    return notes
+
+
 def _mermaid(
         graph: _Graph,
         part: list[type],
@@ -362,16 +512,51 @@ def _mermaid(
         ) -> str:
     ids: dict[object, str] = {tag: f"t{i}" for i, tag in enumerate(graph.tags)}
     ids[_HOST] = "host"
-    lines = [f"flowchart {direction}"]
+    # Compact rows and smooth arrows. Layering stays words on the rows: an
+    # arrow between rows would pull Mermaid's layout apart.
+    lines = [
+            "---",
+            "config:",
+            "  flowchart:",
+            "    curve: basis",
+            "    rankSpacing: 28",
+            "    nodeSpacing: 18",
+            "    padding: 10",
+            "---",
+            f"flowchart {direction}",
+            ]
     classes = []
 
+    def lane(lane: str, title: str, rows: list[tuple[str, str, str]], indent: str) -> None:
+        """A box of rows, stacked by invisible links."""
+
+        rows = rows or [(f"{lane}_0", f'{lane}_0[" "]', "none")]
+        lines.append(f'{indent}subgraph {lane}["{_text(title)}"]')
+        lines.append(f"{indent}  direction TB")
+
+        for node, definition, look in rows:
+            lines.append(f"{indent}  {definition}")
+            classes.append(f"  class {node} {look}")
+
+        if len(rows) > 1:
+            lines.append(f"{indent}  " + " ~~~ ".join(node for node, _, _ in rows))
+
+        lines.append(f"{indent}end")
+
     if graph.has_host:
-        # The part's name in the box, not a title: not every renderer
-        # draws Mermaid titles.
-        head = _text(graph.host) + (f"<br>{_text(name)}" if name else "")
-        lines.append(f'  host(["{head}"])')
+        # The part's name in the title: not every renderer draws Mermaid titles.
+        lane(
+                "host",
+                graph.host + (f" · {name}" if name else ""),
+                [
+                    (f"host_{i}", f'host_{i}["{_text(f"{field} = {value}")}"]', "field")
+                    for i, (field, value) in enumerate(graph.fields)
+                    ],
+                "  ",
+                )
         classes.append("  class host host")
 
+    notes = _notes(graph, part, every=True)
     modules = _by_module(part)
     boxed = len(modules) > 1
 
@@ -382,13 +567,26 @@ def _mermaid(
             lines.append(f'  subgraph m{number}["{_text(module)}"]')
 
         for tag in tags:
-            members = _members(tag, graph.broken.get(tag, set()))
-            label = "<br>".join([
-                    _text(tag.__name__),
-                    *(_text(f"{kind}: {names}") for kind, names in members),
-                    ])
-            opening, closing = _MERMAID_SHAPES[_kind(tag)]
-            lines.append(f'{indent}{ids[tag]}{opening}"{label}"{closing}')
+            rows = []
+
+            for index, member in enumerate(graph.members[tag]):
+                node = f"{ids[tag]}_{index}"
+                text = _row(graph, tag, member)
+                holds = _holds(graph, tag, member)
+
+                if holds is not None:
+                    text += " · holds" if holds else " · BROKEN"
+
+                label = "<br>".join([
+                        _text(text),
+                        *(f"<i>{_text(note)}</i>" for note in notes.get((tag, index), ())),
+                        ])
+                family = _FAMILY[member.kind]
+                opening, closing = _MERMAID_SHAPES[family]
+                look = "ripped" if tag in graph.ripped else "broken" if holds is False else family
+                rows.append((node, f'{node}{opening}"{label}"{closing}', look))
+
+            lane(ids[tag], _title(tag), rows, indent)
             look = _look(graph, tag)
 
             if look:
@@ -428,6 +626,20 @@ def _quoted(
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
 
 
+def _table(
+        title: str,
+        rows: list[tuple[str, str]],
+        ) -> str:
+    """An HTML label: a title, a rule, then one left-aligned row per port."""
+
+    head = f'<TR><TD ALIGN="CENTER">{title}</TD></TR>'
+    body = "".join(f'<TR><TD ALIGN="LEFT" PORT="{port}">{html}</TD></TR>' for port, html in rows)
+    return (
+            '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2">'
+            f"{head}{'<HR/>' if rows else ''}{body}</TABLE>>"
+            )
+
+
 def _graphviz(
         graph: _Graph,
         part: list[type],
@@ -437,6 +649,7 @@ def _graphviz(
     ids: dict[object, str] = {tag: f"t{i}" for i, tag in enumerate(graph.tags)}
     ids[_HOST] = "host"
     small = '<FONT POINT-SIZE="9">{}</FONT>'
+    tint = '<FONT COLOR="{}">{}</FONT>'
     lines = [
             f"digraph {_quoted(name or graph.host)} {{",
             f"  graph [rankdir={_RANKDIR.get(direction, direction)}, {_DOT_GRAPH}];",
@@ -445,9 +658,14 @@ def _graphviz(
             ]
 
     if graph.has_host:
-        head = _html(graph.host) + (f"<BR/>{small.format(_html(name))}" if name else "")
-        lines.append(f"  host [label=<{head}>, {_DOT_LOOKS['host']}];")
+        title = _html(graph.host) + (f"<BR/>{small.format(_html(name))}" if name else "")
+        rows = [
+                (f"f{i}", small.format(tint.format("#475569", _html(f"{field} = {value}"))))
+                for i, (field, value) in enumerate(graph.fields)
+                ]
+        lines.append(f"  host [label={_table(title, rows)}, {_DOT_LOOKS['host']}];")
 
+    notes = _notes(graph, part, every=False)
     modules = _by_module(part)
     boxed = len(modules) > 1
 
@@ -459,24 +677,37 @@ def _graphviz(
             lines.append(f"    graph [label={_quoted(module)}, {_DOT_LOOKS['module']}];")
 
         for tag in tags:
+            gone = tag in graph.ripped
+            kind = _kind(tag)
+            title = _html(tag.__name__)
+
+            if kind != "tag":
+                title += small.format(tint.format("#64748b", f" · {kind.title()}"))
+
+            rows = []
+
+            for index, member in enumerate(graph.members[tag]):
+                holds = _holds(graph, tag, member)
+                rest = _html(_row(graph, tag, member)[len(member.kind):])
+                word = _html(member.kind)
+
+                if holds is False:
+                    html = tint.format("#e5484d", f"{word}{rest} BROKEN")
+                elif gone:
+                    html = f"{word}{rest}"
+                else:
+                    html = tint.format(_COLORS[_FAMILY[member.kind]], word) + rest
+                    if holds:
+                        html += tint.format("#059669", " holds")
+
+                for note in notes.get((tag, index), ()):
+                    html += "<BR/>" + tint.format("#64748b", f"<I>{_html(note)}</I>")
+
+                rows.append((f"m{index}", small.format(html)))
+
             look = _look(graph, tag)
-            # A broken or Ripped box speaks in one color; others color each
-            # member kind by what it does.
-            plain = look in ("broken", "ripped")
-            members = _members(tag, graph.broken.get(tag, set()))
-            label = "<BR/>".join([
-                    _html(tag.__name__),
-                    *(
-                        small.format(
-                                (_html(kind) if plain
-                                 else f'<FONT COLOR="{_DOT_MEMBER_COLORS[kind]}">{_html(kind)}</FONT>')
-                                + f": {_html(names)}"
-                                )
-                        for kind, names in members
-                        ),
-                    ])
-            looks = [_DOT_SHAPES[_kind(tag)], *([_DOT_LOOKS[look]] if look else [])]
-            lines.append(f"{indent}{ids[tag]} [label=<{label}>, {', '.join(looks)}];")
+            extra = f", {_DOT_LOOKS[look]}" if look else ""
+            lines.append(f"{indent}{ids[tag]} [label={_table(title, rows)}{extra}];")
 
         if boxed:
             lines.append("  }")
@@ -487,6 +718,16 @@ def _graphviz(
         if shape in drawn:
             extra = f" [style=dashed, label={_quoted(f' {label} ')}]" if label else ""
             lines.append(f"  {ids[source]} -> {ids[shape]}{extra};")
+
+    for tag, index, prior, row, relation in graph.links:
+        if tag in drawn and prior in drawn:
+            color = _LINK_COLORS[relation]
+            head = "normal" if relation == "underlay" else "tee"
+            lines.append(
+                    f"  {ids[tag]}:m{index} -> {ids[prior]}:m{row} [style=dotted,"
+                    f' constraint=false, color="{color}", fontcolor="{color}",'
+                    f" arrowhead={head}, label={_quoted(f' {relation} ')}];"
+                    )
 
     lines.append("}")
 
