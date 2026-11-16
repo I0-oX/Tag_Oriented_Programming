@@ -1220,6 +1220,9 @@ def _mermaid_lanes(
             "config:",
             "  flowchart:",
             "    wrappingWidth: 360",
+            "    nodeSpacing: 18",
+            "    rankSpacing: 22",
+            "    padding: 6",
             "---",
             "swimlane-beta TD",
             ]
