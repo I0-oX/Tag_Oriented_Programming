@@ -68,6 +68,7 @@ from .state import _state_of
 LIMIT = 40
 _HOST = None
 _ESCAPES = {
+        "&": "&amp;",
         "#": "#35;",
         '"': "#quot;",
         "<": "#lt;",
@@ -929,9 +930,13 @@ _LANE_TEXT = "#0f172a"
 def _lane_port(
         name: str,
         ) -> str:
-    """A declaration's name as a Graphviz port, quoted when it is not one."""
+    """A declaration's name as a Graphviz port: a plain identifier when it
+    is one, else a deterministic safe id (Graphviz splits quoted ports at
+    ``:`` and mis-decodes ``\\``). The table cell uses the same id."""
 
-    return name if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) else _quoted(name)
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        return name
+    return "p" + name.encode("utf-8").hex()
 
 
 def _lane_tint(
@@ -1014,11 +1019,11 @@ def _lane_columns(
                     f'<FONT COLOR="{color}" POINT-SIZE="10"><B>{_html(field)}</B></FONT>'
                     )
 
-        columns.append(_LaneColumn("host", _html(graph.host), cells, {}, fields=tuple(fields)))
+        columns.append(_LaneColumn("host", graph.host, cells, {}, fields=tuple(fields)))
 
     for tag in [*ordered, *ripped]:
         is_ripped = tag in graph.ripped
-        title = _html(_title(graph, tag))
+        title = _title(graph, tag)
 
         if not is_ripped:
             bases = [
@@ -1086,7 +1091,7 @@ def _lane_table(
     body = [
             f'<TR><TD PORT="title" HEIGHT="{_LANE_TITLE_H}" WIDTH="{width}" '
             f'ALIGN="CENTER" BGCOLOR="{title_bg}">'
-            f'<B><FONT COLOR="{title_color}" POINT-SIZE="11">{column.title}</FONT></B></TD></TR>',
+            f'<B><FONT COLOR="{title_color}" POINT-SIZE="11">{_html(column.title)}</FONT></B></TD></TR>',
             f'<TR><TD HEIGHT="3" WIDTH="{width}" BGCOLOR="{border}" BORDER="0"></TD></TR>',
             ]
 
@@ -1095,7 +1100,7 @@ def _lane_table(
 
         if name in column.cells:
             body.append(
-                    f'<TR><TD PORT="{_html(name)}" {height} '
+                    f'<TR><TD PORT="{_lane_port(name)}" {height} '
                     f'BGCOLOR="{column.tints.get(name, "#ffffff")}">{column.cells[name]}</TD></TR>'
                     )
         else:
@@ -1289,7 +1294,7 @@ def _mermaid_lanes(
     painted: dict[str, list[int]] = {}
 
     for column in columns:
-        lines.append(f'  subgraph {column.id}["{column.title}"]')
+        lines.append(f'  subgraph {column.id}["{_text(column.title)}"]')
         nodes: list[str] = []
         hanging: list[tuple[str, list[str]]] = []
         broken: list[str] = []

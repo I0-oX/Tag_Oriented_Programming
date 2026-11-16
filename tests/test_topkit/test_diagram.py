@@ -12,6 +12,7 @@ import warnings
 from unittest import mock
 
 from TopKit import Constant
+from TopKit import Delete
 from TopKit import Flag
 from TopKit import Pin
 from TopKit import Post
@@ -686,7 +687,7 @@ class DiagramTests(unittest.TestCase):
         (text,) = Diagram(odd()).values()
         (dot,) = Diagram(odd(), format="graphviz").values()
 
-        self.assertIn('host(["Odd#quot;#lt;b#gt;&#35;"])', text)
+        self.assertIn('host(["Odd#quot;#lt;b#gt;&amp;#35;"])', text)
         self.assertIn('digraph "Odd\\"<b>&#" {', dot)
         self.assertIn('<TD>Odd&quot;&lt;b&gt;&amp;#</TD>', dot)
 
@@ -933,7 +934,7 @@ class LanesTests(unittest.TestCase):
         for source, arrow, target in links:
             self.assertIn(source, by_column[columns[1]])
             self.assertIn(target, by_column[columns[2]])
-            self.assertTrue(arrow.startswith("-."))
+        self.assertEqual([arrow for _, arrow, _ in links], ["-.->", "-.-x"])
         self.assertRegex(nodes[links[0][0]], r">Record</span> spells$")
         self.assertRegex(nodes[links[0][2]], r"↳ underlay Kin")
         self.assertIn("↳ replaces Kin", nodes[links[1][2]])
@@ -1170,6 +1171,101 @@ class LanesTests(unittest.TestCase):
         nodes = _swim_column_nodes(mmd)[pin]
         self.assertIn("Record</span> rarity", nodes[f"{pin}_rarity"])
         self.assertIn(f"class {pin}_rarity pin", mmd)
+
+    def test_a_deleted_member_draws_a_deletes_layering(self) -> None:
+        class Base(Tag):
+            @Record
+            def x(agent) -> int:
+                return 1
+        class Gone(Tag):
+            @Delete
+            def x(agent) -> int:
+                return 0
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Base(ari)
+            Gone(ari)
+        (mmd,) = Diagram(ari, layout="lanes").values()
+        (dot,) = Diagram(ari, format="graphviz", layout="lanes").values()
+
+        self.assertIn("-.-x", mmd)
+        self.assertIn("↳ deletes Base", mmd)
+        self.assertRegex(mmd, r"linkStyle \d+ stroke:#ef4444,")
+        self.assertIn("↳ deletes Base", dot)
+        self.assertIn('color="#ef4444", arrowhead=tee', dot)
+
+    def test_long_contributions_are_truncated_with_an_ellipsis(self) -> None:
+        class Base(Tag):
+            @Record
+            def xs(agent) -> list:
+                return ["a"]
+        class More(Tag):
+            @Record
+            def xs(agent, stored) -> list:
+                return stored + ["b", "c", "d", "e", "f"]
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Base(ari)
+            More(ari)
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+
+        more = _swim_columns(mmd)[2][0]
+        nodes = _swim_column_nodes(mmd)[more]
+        self.assertEqual(
+                [nodes[f"{more}_xs_i{i}"] for i in range(5)],
+                ["b", "c", "d", "e", "…"],
+                )
+
+    @unittest.skipUnless(shutil.which("dot"), "Graphviz is not installed")
+    def test_a_name_with_colon_or_backslash_routes_its_port(self) -> None:
+        def rec(stored=False):
+            if stored:
+                def f(agent, prior):
+                    return prior + 1
+            else:
+                def f(agent):
+                    return 1
+            return Record(f)
+        for name in ("a:b", "a\\b"):
+            Base = type("Base", (Tag,), {"__module__": "game.p", name: rec()})
+            More = type("More", (Tag,), {"__module__": "game.p", name: rec(True)})
+            ari = Hero()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                Base(ari)
+                More(ari)
+            (dot,) = Diagram(ari, format="graphviz", layout="lanes").values()
+            done = subprocess.run(
+                    ["dot", "-Tsvg"], input=dot, text=True, capture_output=True, check=True,
+                    )
+            self.assertNotIn("unrecognized", done.stderr)
+            port = "p" + name.encode("utf-8").hex()
+            self.assertIn(f't0:{port}:e -> t1:{port}:w', dot)
+            self.assertIn(f'PORT="{port}"', dot)
+
+    def test_mermaid_lanes_escape_entity_looking_text(self) -> None:
+        class T(Tag):
+            @Record
+            def x(agent) -> int:
+                return 1
+        ari = Hero()
+        setattr(ari, "q", "&quot;")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            T(ari)
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+        self.assertIn("q: '&amp;quot;'", mmd)
+
+        Weird = type("Weird", (Tag,), {"__module__": "game.w"})
+        Weird.__name__ = "A#35;B"
+        other = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Weird(other)
+        (titles,) = Diagram(other, layout="lanes").values()
+        self.assertIn('subgraph t0["① A#35;35;B"]', titles)
 
     def test_live_lanes_mark_only_the_broken_owner(self) -> None:
         ari = Agent()
