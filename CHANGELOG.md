@@ -73,12 +73,14 @@
   draws it with the `dot` command. `layout="lanes"` draws the same Geometry as
   columns instead of boxes: Mermaid writes `swimlane-beta TD`, one column per
   Tag with the host first, one node per declaration — hexagon checks (Pre,
-  Post, Imprint, Constant), square state (Record, Report), rounded behaviour
-  (Action, Operation, Rip, Delete) — and layering arrows between same-named
-  members in the same colours; Graphviz draws one table per column with those
-  members in shared rows. With `live=True` lanes add host `name: value` nodes,
-  each list item hanging from its Record, `✓ holds` / `✗ BROKEN` on the owning
-  node and a dashed column for Ripped Tags. Lanes are always columns left to
+  Post, Imprint), square state (Record, Report), rounded behaviour (Action,
+  Operation, Rip, Delete) — and layering arrows between same-named members
+  in the same colours; Graphviz draws one table per column with those members
+  in shared rows. With `live=True` lanes add the host's values, each Record's
+  contributions, `✓ holds` / `✗ BROKEN` on the owning node and a dashed column
+  for Ripped Tags. Mermaid draws host fields as `name: value` nodes and hangs
+  each list item from its Record; Graphviz keeps them in the table rows.
+  Lanes are always columns left to
   right, so `direction` applies only to boxes (`LR` with lanes raises), and
   `image=` still needs `format="graphviz"`.
 

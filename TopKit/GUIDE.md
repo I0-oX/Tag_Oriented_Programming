@@ -1342,13 +1342,15 @@ To read a chart:
 `layout="lanes"` draws the same chart as columns instead of boxes. The host
 is the first column, then one column per Tag in Overlay order. Mermaid writes
 `swimlane-beta TD`; each declaration is a node — a hexagon for a check (Pre,
-Post, Imprint, Constant), a square for state (Record, Report) and a rounded
-node for behaviour (Action, Operation, Rip, Delete) — and layering arrows run
-between same-named members from one column to the next, in the same colours
-as boxes. Graphviz draws one table per column, with those members in shared
-rows. With `live=True` you also get host `name: value` nodes, every list item
-hanging from its Record, `✓ holds` / `✗ BROKEN` on the node that owns the
-verdict, and a dashed column for Ripped Tags at the end. Lanes are always
+Post, Imprint), a square for state (Record, Report) and a rounded node for
+behaviour (Action, Operation, Rip, Delete) — and layering arrows run between
+same-named members from one column to the next, in the same colours as boxes.
+Graphviz draws one table per column, with those members in shared rows. With
+`live=True` you also get the host's values, each Record's contributions,
+`✓ holds` / `✗ BROKEN` on the node that owns the verdict, and a dashed column
+for Ripped Tags at the end. Mermaid draws host fields as `name: value` nodes
+and hangs each list item from its Record; Graphviz keeps them in the rows.
+Lanes are always
 columns side by side, so `direction` applies only to boxes: `LR` with lanes
 raises. As with boxes, `image=` works only with `format="graphviz"`; a Mermaid
 chart is drawn by its viewer.

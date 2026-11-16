@@ -890,8 +890,9 @@ class LanesTests(unittest.TestCase):
                 ["Hero", "① Kin", "② Mage"],
                 )
         nodes = _swim_column_nodes(mmd)
-        self.assertIn("↳ underlay Kin", nodes["t1"]["t1_spells"])
-        self.assertIn("↳ underlay Kin", _lane_cell(dot, "t1", "spells"))
+        mage = _swim_columns(mmd)[2][0]
+        self.assertIn("↳ underlay Kin", nodes[mage][f"{mage}_spells"])
+        self.assertIn("↳ underlay Kin", _lane_cell(dot, _lane_ids(dot)[2], "spells"))
 
     def test_mermaid_lanes_start_after_the_front_matter(self) -> None:
         (mmd,) = Diagram(_mage(), layout="lanes").values()
@@ -914,11 +915,9 @@ class LanesTests(unittest.TestCase):
 
     def test_mermaid_lanes_name_kinds_and_use_the_wiki_shapes(self) -> None:
         (mmd,) = Diagram(_mage(), layout="lanes").values()
-        color = r"<span style='color:rgb\(\d+,\d+,\d+\)'>"
-
-        self.assertRegex(mmd, r'\["' + color + r'Record</span> spells"\]')
-        self.assertRegex(mmd, r'\{\{"' + color + r'Post</span> Has_Spells"\}\}')
-        self.assertRegex(mmd, r'\("' + color + r'Action</span> Greet"\)')
+        self.assertRegex(mmd, r'\["<span style=\'color:rgb\(16,185,129\)\'>Record</span> spells"\]')
+        self.assertRegex(mmd, r'\{\{"<span style=\'color:rgb\(59,130,246\)\'>Post</span> Has_Spells"\}\}')
+        self.assertRegex(mmd, r'\("<span style=\'color:rgb\(139,92,246\)\'>Action</span> Greet"\)')
 
     def test_layering_links_name_the_earlier_member_first(self) -> None:
         ari = _mage()
@@ -1034,12 +1033,65 @@ class LanesTests(unittest.TestCase):
                                       for label in nodes.values()])
         self.assertIn("name = 'Ari'", dot)
 
-        items = re.findall(r'^\s+\w+ ---\|\+\| (\w+)$', mmd, re.MULTILINE)
-        self.assertTrue(items)
-        labels = [label for nodes in _swim_column_nodes(mmd).values()
-                  for node, label in nodes.items() if node in items]
-        self.assertTrue(any("Bolt" in label for label in labels))
+        mage = _swim_columns(mmd)[2][0]
+        edges = re.findall(r'^\s+(\w+) ---\|\+\| (\w+)$', mmd, re.MULTILINE)
+        self.assertEqual(edges, [(f"{mage}_spells", f"{mage}_spells_i0")])
+        nodes = {node: label for group in _swim_column_nodes(mmd).values()
+                 for node, label in group.items()}
+        self.assertEqual(nodes[f"{mage}_spells_i0"], "Bolt")
         self.assertIn("✓ holds", mmd)
+
+    def test_a_layering_is_written_as_words_when_lanes_split_into_charts(self) -> None:
+        Low = type("Low", (Tag,), {"__module__": "game.low", "Speak": lambda agent: "a"})
+        High = type("High", (Tag,), {"__module__": "game.high", "Speak": lambda agent: "b"})
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Low(ari)
+            High(ari)
+
+        parts = Diagram(ari, limit=1, layout="lanes")
+        dots = Diagram(ari, limit=1, layout="lanes", format="graphviz")
+
+        self.assertIn("↳ replaces Low", parts["game.high"])
+        self.assertNotIn("-.->", parts["game.high"])
+        self.assertIn("↳ replaces Low", dots["game.high"])
+        self.assertNotIn(":e -> ", dots["game.high"])
+
+    def test_a_record_value_containing_plus_is_not_split_into_items(self) -> None:
+        class Calc(Tag):
+            @Record
+            def expr(agent) -> str:
+                return "x + y"
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Calc(ari)
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+
+        self.assertIn("expr = 'x + y'", mmd)
+        self.assertNotIn("---|+|", mmd)
+
+    def test_a_list_item_containing_a_comma_stays_one_item(self) -> None:
+        class Base(Tag):
+            @Record
+            def xs(agent) -> list:
+                return ["a"]
+        class More(Tag):
+            @Record
+            def xs(agent, stored) -> list:
+                return stored + ["b, c", "d"]
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Base(ari)
+            More(ari)
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+
+        nodes = {node: label for group in _swim_column_nodes(mmd).values()
+                 for node, label in group.items()}
+        items = [label for node, label in nodes.items() if re.fullmatch(r"t\d+_xs_i\d+", node)]
+        self.assertEqual(items, ["b, c", "d"])
 
     def test_live_lanes_mark_only_the_broken_owner(self) -> None:
         ari = Agent()

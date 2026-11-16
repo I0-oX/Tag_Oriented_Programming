@@ -41,6 +41,7 @@ a module still above the limit is split, between families, into
 
 from __future__ import annotations
 
+import ast
 import re
 import reprlib
 import shutil
@@ -1188,20 +1189,27 @@ def _swim_node(
 def _swim_items(
         text: str,
         ) -> tuple[str, list[str]]:
-    """Split a Record's contribution into the node's text and the list items
-    that hang off it: ``+ 'a', 'b'`` becomes ``()`` and ``['a', 'b']``."""
+    """Split a Record's list contribution into the node's text and the items
+    that hang off it: ``spells + 'a', 'b'`` becomes ``spells`` and
+    ``['a', 'b']``. A ``= value`` or ``+n → total`` row is left whole, even
+    when the value itself contains `` + ``."""
 
-    match = re.search(r" \+ (.+)$", text)
+    match = re.match(r"(\S+) \+ (.+)", text)
     if not match:
         return text, []
 
-    pieces = [piece.strip().strip("'\"") for piece in match.group(1).split(", ")]
-    items = pieces[:_SWIM_MAX_ITEMS]
+    body = match.group(2)
+    try:
+        pieces = [item if isinstance(item, str) else _shown(item)
+                  for item in ast.literal_eval("[" + body + "]")]
+    except (ValueError, SyntaxError):
+        pieces = [piece.strip().strip("'\"") for piece in body.split(", ")]
 
+    items = pieces[:_SWIM_MAX_ITEMS]
     if len(pieces) > _SWIM_MAX_ITEMS:
         items.append("…")
 
-    return text[:match.start()], items
+    return match.group(1), items
 
 
 def _mermaid_lanes(
