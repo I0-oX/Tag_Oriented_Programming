@@ -34,21 +34,25 @@
 
 - **Diagrams:** `TopKit.diagram.Diagram(agent)` returns Mermaid flowcharts
   of an Agent's Geometry, or of a Tag's Form and Pins, by name. The host
-  has a lane of its own fields; each Tag is a lane with one row per
-  declaration, kind first — checks as hexagons, state as squares,
-  behaviour as rounded boxes. On an Agent a Record row shows the value it
-  holds now and a Post row ends in `holds` or `BROKEN`; a Layer covering
-  another shows `underlay`, `replaces` or `deletes` as a note on the row
-  (a dotted link between rows in Graphviz). Lane titles name Pins and
-  Flags. A Geometry with more than `limit` Tags (40 by default, a soft
-  limit) is divided by the module that declares each family's top Base,
-  one chart per module, named for it; a family of Tags is never split,
-  and a module still above the limit is split between families into
-  `module (2)` and so on. `format="graphviz"` gives the same charts as
-  Graphviz DOT, with the kind word coloured by what it does. `Save(agent,
-  path)` writes each chart as a `.mmd` (or `.dot`) file, with no
-  dependency; with Graphviz, `image="svg"` or `"png"` also draws it with
-  the `dot` command.
+  is a capsule showing its name, a thin rule and its own fields. Each Tag
+  is one box whose shape says what it is — rounded for a Tag, a hexagon
+  for a Pin, a flag for a Flag — showing the Tag's name, a thin rule and
+  one line per declaration. The kind word is coloured blue for checks,
+  green for state and purple for behaviour, followed by the name and a
+  Record's value on an Agent; a Post ends in ` · BROKEN` in red or
+  ` · holds` in green, and a Layer covering another adds ` · underlay`,
+  ` · replaces` or ` · deletes` in italics. Arrows run from the host to a
+  Tag and from a Base to its Shape, with dotted arrows for Pins and
+  Ripped Tags. A Geometry with more than `limit` Tags (40 by default, a
+  soft limit) is divided by the module that declares each family's top
+  Base, one chart per module, named for it; a family of Tags is never
+  split, and a module still above the limit is split between families
+  into `module (2)` and so on. `format="graphviz"` gives the same charts
+  as Graphviz DOT: one row per declaration, the kind word coloured by
+  what it does, `holds` or `BROKEN` on a Post, and dotted layering links
+  between rows. `Save(agent, path)` writes each chart as a `.mmd` (or
+  `.dot`) file, with no dependency; with Graphviz, `image="svg"` or
+  `"png"` also draws it with the `dot` command.
 
 - **Pin declarations and native Targets:** `class Rare(Pin)` declares a
   concrete Pin. Ordinary Tags apply to object instances; named Pins apply

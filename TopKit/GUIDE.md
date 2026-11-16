@@ -1308,18 +1308,23 @@ your Reports and Operations there.
 `TopKit.diagram` draws what the tables above answer one at a time: the
 Geometry, and what each Tag declares. `Diagram(agent)` returns Mermaid
 charts by name, with no dependency; paste a chart in any Mermaid viewer.
-The host gets a lane of its own fields. Each Tag gets a lane with one row
-per declaration it makes, kind first: Pre, Post and Imprint are hexagons,
-Record and Report squares, Action, Operation, Rip and Delete rounded.
-On an Agent, a Record row shows the value it holds now, and a Post row
-ends in `holds` or `BROKEN`, marked where the promise is checked. Where a
-Layer covers an earlier one, a second line on the row reads `underlay Kin`,
-`replaces Capped` or `deletes X`. An arrow runs from the host to a Tag and
-from a Base to its Shape; a Pin or a Flag is named in its lane's title.
-When a chart holds Tags of several modules, each module is a box.
-`Diagram(Wizard)` draws a Tag's Form and the Pins it carries.
+The host is a capsule showing its name, a thin rule, then its own fields.
+Everything else is one box per Tag, and the shape says what the Tag is:
+rounded for a Tag, a hexagon for a Pin, a flag for a Flag. A box shows the
+Tag's name, a thin rule, then one line per declaration, kind first: the
+kind word is blue for checks (Pre, Post, Imprint), green for state
+(Record, Report) and purple for behaviour (Action, Operation, Rip,
+Delete), followed by the name and, for a Record on an Agent, the value it
+holds now. A Post ends in ` · BROKEN` in red when its promise fails, or
+` · holds` in green when it holds; where a Layer covers an earlier one,
+the line adds ` · underlay Kin`, ` · replaces Kin` or ` · deletes X` in
+italics. Arrows run from the host to a Tag and from a Base to its Shape,
+with dotted arrows for Pins and Ripped Tags. When a chart holds Tags of
+several modules, each module is a box. `Diagram(Wizard)` draws a Tag's
+Form and the Pins it carries.
 
 ```python
+import re
 from TopKit.diagram import Diagram
 
 class Being(Tag):
@@ -1347,10 +1352,11 @@ Mage(sol)
 sol.focus = 0                                   # the promise breaks
 
 chart = Diagram(sol)["Character"]               # charts by name
-assert '["focus = 0"]' in chart                  # a host field
-assert '{{"Post Has_Focus · BROKEN"}}' in chart
-assert '["Record Mana = 10<br><i>replaces Being</i>"]' in chart
-assert '("Action Cast")' in chart
+plain = re.sub(r"<[^>]*>", "", chart)           # drop the colour markup
+assert 'focus = 0' in plain                      # a host field
+assert 'Post Has_Focus · BROKEN' in plain
+assert 'Record Mana = 10 · replaces Being' in plain   # a Record value
+assert 'Action Cast' in plain
 ```
 
 A Geometry with more Tags than `limit` (40 by default) is divided the way
@@ -1369,14 +1375,16 @@ the same file name. A `.mmd` needs no picture: GitHub, VS Code and
 mermaid.live draw it.
 
 `format="graphviz"` gives the same charts as Graphviz DOT instead, in
-`Diagram` and `Save` (`sol.dot`). There each Tag is a box with one row per
-declaration, the kind word in blue for checks, green for state and purple
-for behaviour; a Post adds `holds` in green or turns red with `BROKEN`.
-A dotted arrow between two rows shows layering, labelled `underlay`,
-`replaces` or `deletes`; when the earlier Layer is in another chart, the
-words stay on the row. With it, `image="svg"` or `image="png"` also draws
-each chart beside its `.dot` with Graphviz's own `dot` command, which must
-be installed.
+`Diagram` and `Save` (`sol.dot`). There each Tag is a box holding one HTML
+table row per declaration: the kind word is coloured blue for checks
+(Pre, Post, Imprint), green for state (Record, Report) and purple for
+behaviour (Action, Operation, Rip, Delete). A Post adds `holds` in green
+when it holds or turns red with `BROKEN` when it fails. Where a Layer
+covers an earlier one, a dotted, labelled arrow runs between the two rows,
+reading `underlay`, `replaces` or `deletes`; when the earlier Layer is in
+another chart, the words stay on the row instead. With it, `image="svg"`
+or `image="png"` also draws each chart beside its `.dot` with Graphviz's
+own `dot` command, which must be installed.
 
 ---
 

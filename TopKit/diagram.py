@@ -7,16 +7,23 @@ Graphviz ``.dot`` with ``format="graphviz"``; both need nothing outside the
 standard library. With ``format="graphviz"``, ``Save(..., image="svg")`` or
 ``image="png"`` also draws each file with Graphviz's ``dot`` command.
 
-Each Tag is a box holding one row for each Contribution or condition it
-declares itself, kind first: ``Record spells = ['Light']``, ``Action
-Attack``, ``Post Has_Book``. On an Agent, a Record shows the value it holds
-now, on the Layer that supplied it, and a Post shows whether it holds; the
-host's box lists its own fields. An arrow runs from a Base to its Shape;
-where two Layers give the same name, a dotted arrow runs from the later to
-the earlier one: ``underlay`` when the later extends it, ``replaces`` or
-``deletes`` when it covers it. Ripped Tags stay as dashed boxes, a Tag's
-Pins hang from it, and when a chart holds Tags of several modules, each
-module is a box.
+Mermaid draws one box per Tag: rounded for a Tag, a hexagon for a Pin and
+a flag for a Flag. A box shows the Tag's name, a thin divider, then one
+line per declaration: the kind word coloured blue for checks, green for
+state and purple for behaviour, then the name and the Record's value on
+an Agent. A Post adds `` · BROKEN`` in red or `` · holds`` in green; where
+two Layers give the same name, the later one adds `` · underlay Kin``,
+`` · replaces Capped`` or `` · deletes X`` in italics. The host is a
+capsule with its name, a divider and its own fields. Arrows run from the
+host to a Tag and from a Base to its Shape; Pins and Ripped Tags are
+linked with dotted arrows. When a chart holds Tags of several modules,
+each module is a box.
+
+Graphviz instead draws each Tag as an HTML-table node with one row per
+declaration: the kind word is coloured blue for checks, green for state
+and purple for behaviour, a Post adds ``holds`` in green or turns red with
+``BROKEN``, and a dotted, labelled link runs between the rows of two
+Layers that give the same name.
 
 A diagram with more Tags than ``limit`` is divided by code: each family of
 Tags joined through Bases goes to the module that declares its top Base,
@@ -71,17 +78,12 @@ _HTML_ESCAPES = {
 # theme, and a fill fixed for a light page leaves a dark theme's text
 # unreadable, and the reverse.
 _MERMAID_STYLES = {
-        "host": "stroke:#64748b,stroke-width:2px",
-        "field": "stroke:#94a3b8",
+        "host": "stroke-width:3px",
         "pin": "stroke:#d4a017,stroke-width:2px",
         "flag": "stroke:#0d9488,stroke-width:2px",
-        "broken": "stroke:#e5484d,stroke-width:2px,color:#e5484d",
+        "broken": "stroke:#e5484d,stroke-width:3px",
         "ripped": "stroke:#8b8b8b,stroke-dasharray:6 3,color:#8b8b8b",
         "module": "fill:none,stroke:#94a3b8,stroke-dasharray:4 4",
-        "check": "stroke:#2563eb",
-        "data": "stroke:#059669",
-        "act": "stroke:#7c3aed",
-        "none": "fill:none,stroke:none",
         }
 # Each member kind by what it does: checks, state, behaviour.
 _FAMILY = {
@@ -96,12 +98,12 @@ _FAMILY = {
         "Delete": "act",
         }
 _COLORS = {"check": "#2563eb", "data": "#059669", "act": "#7c3aed"}
-# A row's box in Mermaid: checks are hexagons, state is square, behaviour
-# is rounded.
+# What a Tag is picks its box in Mermaid: rounded for a Tag, a hexagon for
+# a Pin, a flag for a Flag.
 _MERMAID_SHAPES = {
-        "check": ("{{", "}}"),
-        "data": ("[", "]"),
-        "act": ("(", ")"),
+        "tag": ("(", ")"),
+        "pin": ("{{", "}}"),
+        "flag": (">", "]"),
         }
 _LINK_COLORS = {"underlay": "#7c3aed", "replaces": "#d97706", "deletes": "#e5484d"}
 # Names that layer on an Agent, so a later Tag can extend or cover them.
@@ -504,6 +506,54 @@ def _notes(
     return notes
 
 
+def _paint(
+        color: str,
+        html: str,
+        ) -> str:
+    """Colored text in a Mermaid label. An ``rgb()`` color, because ``#``
+    followed by ``;`` reads as an entity there."""
+
+    return f"<span style='color:{color}'>{html}</span>"
+
+
+def _rgb(
+        color: str,
+        ) -> str:
+    return "rgb({},{},{})".format(*(int(color[i:i + 2], 16) for i in (1, 3, 5)))
+
+
+def _summary(
+        graph: _Graph,
+        tag: type,
+        notes: dict[tuple[type, int], list[str]],
+        ) -> list[str]:
+    """The box's lines after its title, as Mermaid label HTML: a quiet
+    divider, then one line per declaration, kind first and colored by what
+    it does, then its value, whether a Post holds, and how it layers over an
+    earlier Tag. A Ripped Tag's lines stay plain: its class greys them."""
+
+    plain = tag in graph.ripped
+    lines = []
+
+    for index, member in enumerate(graph.members[tag]):
+        kind = _text(member.kind)
+        line = (kind if plain else _paint(_rgb(_COLORS[_FAMILY[member.kind]]), kind))
+        line += " " + _text(_row(graph, tag, member)[len(member.kind) + 1:])
+        holds = _holds(graph, tag, member)
+
+        if holds is False:
+            line += " · " + _paint(_rgb("#e5484d"), "BROKEN")
+        elif holds and not plain:
+            line += " · " + _paint(_rgb("#059669"), "holds")
+
+        for note in notes.get((tag, index), ()):
+            line += f" · <i>{_text(note)}</i>"
+
+        lines.append(line)
+
+    return ["─" * 14, *lines] if lines else []
+
+
 def _mermaid(
         graph: _Graph,
         part: list[type],
@@ -512,48 +562,15 @@ def _mermaid(
         ) -> str:
     ids: dict[object, str] = {tag: f"t{i}" for i, tag in enumerate(graph.tags)}
     ids[_HOST] = "host"
-    # Compact rows and smooth arrows. Layering stays words on the rows: an
-    # arrow between rows would pull Mermaid's layout apart.
-    lines = [
-            "---",
-            "config:",
-            "  flowchart:",
-            "    curve: basis",
-            "    rankSpacing: 28",
-            "    nodeSpacing: 18",
-            "    padding: 10",
-            "---",
-            f"flowchart {direction}",
-            ]
+    lines = [f"flowchart {direction}"]
     classes = []
 
-    def lane(lane: str, title: str, rows: list[tuple[str, str, str]], indent: str) -> None:
-        """A box of rows, stacked by invisible links."""
-
-        rows = rows or [(f"{lane}_0", f'{lane}_0[" "]', "none")]
-        lines.append(f'{indent}subgraph {lane}["{_text(title)}"]')
-        lines.append(f"{indent}  direction TB")
-
-        for node, definition, look in rows:
-            lines.append(f"{indent}  {definition}")
-            classes.append(f"  class {node} {look}")
-
-        if len(rows) > 1:
-            lines.append(f"{indent}  " + " ~~~ ".join(node for node, _, _ in rows))
-
-        lines.append(f"{indent}end")
-
     if graph.has_host:
-        # The part's name in the title: not every renderer draws Mermaid titles.
-        lane(
-                "host",
-                graph.host + (f" · {name}" if name else ""),
-                [
-                    (f"host_{i}", f'host_{i}["{_text(f"{field} = {value}")}"]', "field")
-                    for i, (field, value) in enumerate(graph.fields)
-                    ],
-                "  ",
-                )
+        # The part's name in the box, not a title: not every renderer
+        # draws Mermaid titles.
+        head = [_text(graph.host), *([_text(name)] if name else [])]
+        fields = [_text(f"{field} = {value}") for field, value in graph.fields]
+        lines.append(f'  host(["{"<br>".join([*head, *(["─" * 14, *fields] if fields else [])])}"])')
         classes.append("  class host host")
 
     notes = _notes(graph, part, every=True)
@@ -567,26 +584,9 @@ def _mermaid(
             lines.append(f'  subgraph m{number}["{_text(module)}"]')
 
         for tag in tags:
-            rows = []
-
-            for index, member in enumerate(graph.members[tag]):
-                node = f"{ids[tag]}_{index}"
-                text = _row(graph, tag, member)
-                holds = _holds(graph, tag, member)
-
-                if holds is not None:
-                    text += " · holds" if holds else " · BROKEN"
-
-                label = "<br>".join([
-                        _text(text),
-                        *(f"<i>{_text(note)}</i>" for note in notes.get((tag, index), ())),
-                        ])
-                family = _FAMILY[member.kind]
-                opening, closing = _MERMAID_SHAPES[family]
-                look = "ripped" if tag in graph.ripped else "broken" if holds is False else family
-                rows.append((node, f'{node}{opening}"{label}"{closing}', look))
-
-            lane(ids[tag], _title(tag), rows, indent)
+            label = "<br>".join([_text(tag.__name__), *_summary(graph, tag, notes)])
+            opening, closing = _MERMAID_SHAPES[_kind(tag)]
+            lines.append(f'{indent}{ids[tag]}{opening}"{label}"{closing}')
             look = _look(graph, tag)
 
             if look:
