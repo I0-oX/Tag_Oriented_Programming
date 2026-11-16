@@ -162,7 +162,7 @@ class DiagramTests(unittest.TestCase):
     def test_each_row_says_what_the_tag_declares_and_what_it_holds(self) -> None:
         ari = _mage()
 
-        (text,) = Diagram(ari).values()
+        (text,) = Diagram(ari, live=True).values()
         labels = {_title(label): label for label in _boxes(text).values()}
 
         self.assertEqual(_kinds(labels["Hero"]), ["name = 'Ari'"])     # host fields only
@@ -175,6 +175,92 @@ class DiagramTests(unittest.TestCase):
                     "Action Greet",
                     ],
                 )
+
+    def test_the_general_view_names_host_fields_without_values(self) -> None:
+        ari = _mage()
+
+        (text,) = Diagram(ari).values()
+        (dot,) = Diagram(ari, format="graphviz").values()
+        labels = {_title(label): label for label in _boxes(text).values()}
+
+        self.assertEqual(_kinds(labels["Hero"]), ["name"])
+        self.assertNotIn("name = 'Ari'", text)
+        self.assertNotIn("name = 'Ari'", dot)
+
+    def test_the_general_view_shows_plain_declaration_rows(self) -> None:
+        ari = _mage()
+
+        (text,) = Diagram(ari).values()
+        (dot,) = Diagram(ari, format="graphviz").values()
+        labels = {_title(label): label for label in _boxes(text).values()}
+
+        self.assertEqual(_kinds(labels["Kin"]), ["Record spells", "Action Greet"])
+        self.assertEqual(
+                _kinds(labels["Mage"]),
+                ["Post Has_Spells", "Record spells", "Action Greet"],
+                )
+        self.assertNotIn("= ['Light']", text)
+        self.assertNotIn("+ 'Bolt'", text)
+        self.assertNotIn("now", text)
+        self.assertNotIn("now", dot)
+
+    def test_the_general_view_keeps_layers_and_layering(self) -> None:
+        ari = _mage()
+
+        (text,) = Diagram(ari).values()
+        (dot,) = Diagram(ari, format="graphviz").values()
+        titles = [label.split("\n")[0] for label in _boxes(text).values()]
+
+        self.assertIn("① Kin", titles)
+        self.assertIn("② Mage", titles)
+        self.assertIn(">① Kin</TD>", dot)
+        self.assertIn("|underlay spells|", text)
+        self.assertIn("|replaces Greet|", text)
+        self.assertIn('label=" replaces Greet "', dot)
+
+    def test_the_general_view_checks_no_post_and_marks_nothing_broken(self) -> None:
+        ari = Agent()
+        ari.strength = 10
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Bruiser(ari)
+        ari.strength = 30
+
+        with mock.patch(
+                "TopKit.diagram.Contract.Status",
+                side_effect=AssertionError("a Post ran in the general view"),
+                ) as status:
+            (text,) = Diagram(ari).values()
+            (dot,) = Diagram(ari, format="graphviz").values()
+
+        status.assert_not_called()
+        labels = {_title(label): label for label in _boxes(text).values()}
+        boxes = {_title(label): box for box, label in _boxes(text).items()}
+
+        self.assertEqual(_kinds(labels["Bruiser"]), ["Post Strength_Capped"])
+        self.assertNotIn("✓ holds", text)
+        self.assertNotIn("✗ BROKEN", text)
+        self.assertNotIn("BROKEN", dot)
+        self.assertNotIn(f"  class {boxes['Bruiser']} broken", text)
+        self.assertNotIn('color="#ef4444"', dot)
+
+    def test_the_general_view_draws_no_ripped_tag(self) -> None:
+        ari = Agent()
+        Elf(ari)
+        del Elf[ari]
+
+        with mock.patch(
+                "TopKit.diagram.Contract.Status",
+                side_effect=AssertionError("a Post ran in the general view"),
+                ) as status:
+            (text,) = Diagram(ari).values()
+            (dot,) = Diagram(ari, format="graphviz").values()
+
+        status.assert_not_called()
+        self.assertNotIn("Elf", text)
+        self.assertNotIn("ripped", text)
+        self.assertNotIn("ripped", dot)
+        self.assertNotIn(("Agent", "", "Elf"), _named(text))
 
     def test_layer_numbers_follow_application_order(self) -> None:
         ari = Agent()
@@ -217,8 +303,8 @@ class DiagramTests(unittest.TestCase):
             Spells_Shape(ari)
             Count_Shape(ari)
 
-        (text,) = Diagram(ari).values()
-        (dot,) = Diagram(ari, format="graphviz").values()
+        (text,) = Diagram(ari, live=True).values()
+        (dot,) = Diagram(ari, live=True, format="graphviz").values()
 
         labels = {_title(label): label for label in _boxes(text).values()}
         rows = {name: _kinds(label) for name, label in labels.items()}
@@ -239,8 +325,8 @@ class DiagramTests(unittest.TestCase):
             Counter(ari)
         ari.count = 42
 
-        (text,) = Diagram(ari).values()
-        (dot,) = Diagram(ari, format="graphviz").values()
+        (text,) = Diagram(ari, live=True).values()
+        (dot,) = Diagram(ari, live=True, format="graphviz").values()
 
         self.assertIn("<i>now 42</i>", text)
         self.assertIn("count = 18<BR/><I>now 42</I>", dot)
@@ -256,12 +342,35 @@ class DiagramTests(unittest.TestCase):
             warnings.simplefilter("ignore")
             Lights(ari)
 
-        (text,) = Diagram(ari).values()
-        (dot,) = Diagram(ari, format="graphviz").values()
+        (text,) = Diagram(ari, live=True).values()
+        (dot,) = Diagram(ari, live=True, format="graphviz").values()
 
         labels = {_title(label): label for label in _boxes(text).values()}
         self.assertIn("Record spells = ['Light']", _kinds(labels["Lights"]))
         self.assertIn("Record</FONT> spells = ['Light']", dot)
+
+    def test_an_in_place_change_shows_only_the_final_value(self) -> None:
+        class Spells(Tag):
+            @Record
+            def spells(agent) -> list[str]:
+                return ["Light"]
+
+        class Extended(Spells):
+            @Record
+            def spells(agent, stored) -> list[str]:
+                stored.append("Bolt")
+                return stored
+
+        ari = Agent()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Extended(ari)
+
+        (text,) = Diagram(ari, live=True).values()
+        labels = {_title(label): label for label in _boxes(text).values()}
+
+        self.assertEqual(_kinds(labels["Extended"]), ["Record spells = ['Light', 'Bolt']"])
+        self.assertNotIn("+ 'Bolt'", text)
 
     def test_a_layering_arrow_names_the_earlier_tag_first(self) -> None:
         ari = _mage()
@@ -451,8 +560,8 @@ class DiagramTests(unittest.TestCase):
             Bruiser(ari)
         ari.strength = 30
 
-        (text,) = Diagram(ari).values()
-        (dot,) = Diagram(ari, format="graphviz").values()
+        (text,) = Diagram(ari, live=True).values()
+        (dot,) = Diagram(ari, live=True, format="graphviz").values()
         labels = {_title(label): label for label in _boxes(text).values()}
         boxes = {_title(label): box for box, label in _boxes(text).items()}
 
@@ -466,7 +575,7 @@ class DiagramTests(unittest.TestCase):
         Elf(ari)
         del Elf[ari]
 
-        (text,) = Diagram(ari).values()
+        (text,) = Diagram(ari, live=True).values()
         boxes = {_title(label): box for box, label in _boxes(text).items()}
 
         self.assertIn(f"  host -.->|ripped| {boxes['Elf']}", text)
@@ -482,7 +591,7 @@ class DiagramTests(unittest.TestCase):
         del Base_Again[ari]                                           # the Shape stays
         Base_Again(ari)                                               # now after its Shape
 
-        (text,) = Diagram(ari).values()
+        (text,) = Diagram(ari, live=True).values()
 
         self.assertEqual(
                 _named(text),
@@ -507,7 +616,7 @@ class DiagramTests(unittest.TestCase):
         del Intelligence[lance]
         lance.keeps_secret = False                                    # the lifetime term breaks
 
-        (text,) = Diagram(lance).values()
+        (text,) = Diagram(lance, live=True).values()
         labels = {_title(label): label for label in _boxes(text).values()}
         boxes = {_title(label): box for box, label in _boxes(text).items()}
 
@@ -614,7 +723,7 @@ class DiagramTests(unittest.TestCase):
         odd(ari)
         del Bridge[ari]
 
-        for text in Diagram(ari, format="graphviz").values():
+        for text in Diagram(ari, live=True, format="graphviz").values():
             done = subprocess.run(["dot", "-Tsvg"], input=text, capture_output=True, text=True, check=False)
             self.assertEqual(done.returncode, 0, done.stderr)
 
@@ -653,6 +762,16 @@ class DiagramTests(unittest.TestCase):
             written = {p.name: p.read_text() for p in paths}
 
         self.assertEqual(written, {"ari.dot": Diagram(ari, format="graphviz")["Agent"]})
+
+    def test_save_passes_live_to_the_chart(self) -> None:
+        ari = _mage()
+
+        with tempfile.TemporaryDirectory() as folder:
+            (path,) = Save(ari, pathlib.Path(folder) / "ari", live=True)
+            written = path.read_text()
+
+        self.assertEqual(written, Diagram(ari, live=True)["Hero"])
+        self.assertIn("name = 'Ari'", written)
 
     def test_a_mermaid_chart_has_no_image(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

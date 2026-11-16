@@ -8,25 +8,28 @@ standard library. With ``format="graphviz"``, ``Save(..., image="svg")`` or
 ``image="png"`` also draws each file with Graphviz's ``dot`` command.
 Mermaid files carry front matter that widens wrapping to 360.
 
-Both formats draw one box per Tag: rounded for a Tag, a hexagon for a Pin
-and a flag for a Flag, with the host as a capsule holding its name, a thin
-divider and its own fields. On an Agent a box's title starts with its
-Overlay place as a circled number (``①`` to ``⑳``, then ``21 ·``); a Pin
-or Flag adds `` · Pin`` or `` · Flag``. Ripped Tags and a Tag's Form have
-no number. A thin divider, then one line per declaration: the kind word
-coloured blue for checks, green for state and purple for behaviour, then
-the name. A Record shows what its Layer contributed: ``= value``,
-``+ item, item`` for a list, tuple, string or dict, or ``+18 → 42`` for a
-number. A Post shows ``✓ holds`` in green or ``✗ BROKEN`` in red. A quiet
-italic ``now value`` line follows a changed value; ``↳ underlay Kin``,
-``↳ replaces Kin`` or ``↳ deletes X`` names a Layer in another chart.
-Layers in one chart get bold dashed arrows from the earlier Tag to the
-later one, labelled with the relation and shared names and coloured
+By default both formats draw the code's structure, not one object's state:
+one box per Tag, rounded for a Tag, a hexagon for a Pin and a flag for a
+Flag, with the host as a capsule holding its name, a thin divider and its
+own field names. On an Agent a box's title starts with its Overlay place
+as a circled number (``①`` to ``⑳``, then ``21 ·``); a Pin or Flag adds
+`` · Pin`` or `` · Flag``. A Tag's Form has no number. A thin divider,
+then one line per declaration: the kind word coloured blue for checks,
+green for state and purple for behaviour, then the name. ``↳ underlay Kin``
+or ``↳ replaces Kin`` / ``↳ deletes X`` names a Layer in another chart.
+Layers in one chart get bold dashed arrows from the earlier Tag to
+the later one, labelled with the relation and shared names and coloured
 purple, amber or red; both formats join boxes, and Mermaid crosses out
-replaces and deletes. Arrows also run from the host to a
-Tag and from a Base to its Shape; Pins and Ripped Tags are linked with
-dotted arrows. When a chart holds Tags of several modules, each module is
-a box.
+replaces and deletes. Arrows also run from the host to a Tag and from a
+Base to its Shape; Pins are linked with dotted arrows. When a chart holds
+Tags of several modules, each module is a box.
+
+``live=True`` adds one object's state: host field values; a Record's
+contribution (``= value``, ``+ item, item`` for a list, tuple, string or
+dict, or ``+18 → 42`` for a number); a Post's ``✓ holds`` in green or
+``✗ BROKEN`` in red, with a red border on a broken Tag; a quiet italic
+``now value`` line; and Ripped Tags, dashed with a ``ripped`` arrow. The
+general view runs no user checks and shows none of these.
 
 A diagram with more Tags than ``limit`` is divided by code: each family of
 Tags joined through Bases goes to the module that declares its top Base,
@@ -270,6 +273,7 @@ class _Graph:
     def __init__(
             self,
             subject: object,
+            live: bool = False,
             ) -> None:
         self.host = _name_of(subject)
         self.has_host = not _is_tag(subject)
@@ -297,13 +301,14 @@ class _Graph:
                         state.ever - set(active),
                         key=lambda t: (t.__name__, t.__module__, t.__qualname__),
                         )
-                if state is not None else []
+                if live and state is not None else []
                 )
         # A Post name is checked once, on its latest Layer. A Constant Post
         # outlives its Tag's Rip, so that Layer's Tag may be a Ripped one.
         self.broken: dict[type, set[str]] = {}
         self.status: dict[tuple[type, str], bool] = {}
-        verdicts = Contract.Status(subject) if state is not None else {}
+        # The general view draws no verdicts and runs no user checks.
+        verdicts = Contract.Status(subject) if live and state is not None else {}
 
         for name, holds in verdicts.items():
             layers = state.post_layers.get(name, ())
@@ -316,11 +321,11 @@ class _Graph:
 
         source = _HOST if self.has_host else subject
         carry = None if self.has_host else "pins"
-        live = set(active)
+        in_form = set(active)
         # Base-first, even after a Base was Ripped and Tagged again: then it
         # comes after its Shape in `active`. A family then starts at its top
         # Base, whose module it goes to.
-        forming = dict.fromkeys(t for tag in active for t in _form_of(tag) if t in live)
+        forming = dict.fromkeys(t for tag in active for t in _form_of(tag) if t in in_form)
 
         for tag in forming:
             self._add(tag)
@@ -360,70 +365,79 @@ class _Graph:
 
                 latest[member.name] = (tag, index)
 
-        # What each Record layer put in, read from the snapshot TopKit keeps
-        # after each Tag: a Record that extends shows what it added
-        # (``+ 'Magic Missile'``), one that sets shows its value; the
-        # visible layer adds what the Agent holds now when that changed since.
+        # The general view keeps only structure: the Overlay order above,
+        # the rows below and the arrows between them. Values, verdicts and
+        # Ripped Tags belong to one object, and come only with ``live``.
         self.values: dict[tuple[type, str], str] = {}
         self.now: dict[tuple[type, str], str] = {}
         self.layers: dict[type, int] = {}
-        self.fields: list[tuple[str, str]] = []
+        self.fields: list[str] = []
 
         if self.has_host:
             namespace = _namespace(subject)
             self.layers = {tag: number for number, tag in enumerate(active, 1)}
-            snapshots = state.snapshots if state is not None else {}
-
-            def held(tag: type, name: str) -> object:
-                snapshot = snapshots.get(tag)
-                return _MISSING if snapshot is None else snapshot.records.get(name, _MISSING)
-
-            before: dict[str, object] = {}
-
-            for tag in active:
-                for member in self.members.get(tag, ()):
-                    if member.kind == "Delete":
-                        before.pop(member.name, None)
-                        continue
-                    if member.kind != "Record" or "secret" in member.marks:
-                        continue
-
-                    after = held(tag, member.name)
-
-                    if after is _MISSING:
-                        continue
-
-                    prior = before.get(member.name, _MISSING)
-                    self.values[tag, member.name] = (
-                            _change(prior, after) if member.extends and prior is not _MISSING
-                            else f"= {_shown(after)}"
-                            )
-                    before[member.name] = after
-
-            for name, (tag, index) in latest.items():
-                member = self.members[tag][index]
-                now = namespace.get(name, _MISSING)
-
-                if member.kind != "Record" or "secret" in member.marks or now is _MISSING:
-                    continue
-
-                had = held(tag, name)
-
-                if had is _MISSING:
-                    self.values[tag, name] = f"= {_shown(now)}"
-                elif not _same(had, now):
-                    self.now[tag, name] = _shown(now)
-
             taken = {m.name for rows in self.members.values() for m in rows}
 
             if state is not None:
                 taken |= {*state.records, *state.actions, *state.deleted}
 
+            def field(name: str, value: object) -> str:
+                return f"{name} = {_shown(value)}" if live else name
+
             self.fields = [
-                    (name, _shown(value))
+                    field(name, value)
                     for name, value in namespace.items()
                     if isinstance(name, str) and not name.startswith("_") and name not in taken
                     ]
+
+            if live:
+                # What each Record layer put in, read from the snapshot
+                # TopKit keeps after each Tag: a Record that extends shows
+                # what it added (``+ 'Magic Missile'``), one that sets shows
+                # its value; the visible layer adds what the Agent holds now
+                # when that changed since. Snapshots hold values by
+                # reference, so one changed in place shows only its end.
+                snapshots = state.snapshots if state is not None else {}
+
+                def held(tag: type, name: str) -> object:
+                    snapshot = snapshots.get(tag)
+                    return _MISSING if snapshot is None else snapshot.records.get(name, _MISSING)
+
+                before: dict[str, object] = {}
+
+                for tag in active:
+                    for member in self.members.get(tag, ()):
+                        if member.kind == "Delete":
+                            before.pop(member.name, None)
+                            continue
+                        if member.kind != "Record" or "secret" in member.marks:
+                            continue
+
+                        after = held(tag, member.name)
+
+                        if after is _MISSING:
+                            continue
+
+                        prior = before.get(member.name, _MISSING)
+                        self.values[tag, member.name] = (
+                                _change(prior, after) if member.extends and prior is not _MISSING
+                                else f"= {_shown(after)}"
+                                )
+                        before[member.name] = after
+
+                for name, (tag, index) in latest.items():
+                    member = self.members[tag][index]
+                    now = namespace.get(name, _MISSING)
+
+                    if member.kind != "Record" or "secret" in member.marks or now is _MISSING:
+                        continue
+
+                    had = held(tag, name)
+
+                    if had is _MISSING:
+                        self.values[tag, name] = f"= {_shown(now)}"
+                    elif not _same(had, now):
+                        self.now[tag, name] = _shown(now)
 
     def _add(
             self,
@@ -728,7 +742,7 @@ def _mermaid(
         # The part's name in the box, not a title: not every renderer
         # draws Mermaid titles.
         head = [_text(graph.host), *([_text(name)] if name else [])]
-        fields = [_text(f"{field} = {value}") for field, value in graph.fields]
+        fields = [_text(field) for field in graph.fields]
         lines.append(f'  host(["{"<br>".join([*head, *(["─" * 14, *fields] if fields else [])])}"])')
         classes.append("  class host host")
 
@@ -836,8 +850,8 @@ def _graphviz(
     if graph.has_host:
         title = _html(graph.host) + (f"<BR/>{small.format(_html(name))}" if name else "")
         rows = [
-                (f"f{i}", small.format(tint.format("#475569", _html(f"{field} = {value}"))))
-                for i, (field, value) in enumerate(graph.fields)
+                (f"f{i}", small.format(tint.format("#475569", _html(field))))
+                for i, field in enumerate(graph.fields)
                 ]
         lines.append(f"  host [label={_table(title, rows)}, {_DOT_LOOKS['host']}];")
 
@@ -913,12 +927,23 @@ _IMAGES = ("svg", "png")
 def Diagram(
         subject: object,
         *,
+        live: bool = False,
         limit: int = LIMIT,
         direction: str = "TD",
         format: str = "mermaid",
         ) -> dict[str, str]:
     """Charts of an Agent's Geometry or a Tag's Form, by name: Mermaid
     flowcharts, or Graphviz DOT with ``format="graphviz"``.
+
+    By default a chart is the code's structure: the host's field names,
+    one box per Tag with its declarations, layer numbers, box shapes,
+    module boxes and the arrows between them. No values, Post verdicts or
+    Ripped Tags appear, and no user checks run. ``live=True`` adds one
+    object's state: host field values, what each Record layer contributed,
+    ``now`` values, Post verdicts with a red border on a broken Tag, and
+    Ripped Tags with their ``ripped`` arrows. Contributions and ``now``
+    compare the values each layer left: a mutable value changed in place
+    rather than replaced shows only its final value.
 
     One chart, named for the subject; or, with more than ``limit`` Tags,
     one for each module that declares them, named for the module. Inside a
@@ -931,7 +956,7 @@ def Diagram(
         raise ValueError(f"format is one of {', '.join(_FORMATS)}")
 
     draw = _FORMATS[format][0]
-    graph = _Graph(subject)
+    graph = _Graph(subject, live)
     parts, names = graph.parts(limit)
     divided = len(parts) > 1
 
@@ -975,13 +1000,15 @@ def Save(
         subject: object,
         path: str | PathLike[str],
         *,
+        live: bool = False,
         limit: int = LIMIT,
         direction: str = "TD",
         format: str = "mermaid",
         image: str | None = None,
         ) -> tuple[Path, ...]:
     """Write ``Diagram(subject)`` as text files: Mermaid ``.mmd``, or
-    Graphviz ``.dot`` with ``format="graphviz"``.
+    Graphviz ``.dot`` with ``format="graphviz"``. ``live=True`` draws one
+    object's state instead of the general structure; see ``Diagram``.
 
     One part is written to ``path`` with that suffix; several parts beside
     it, each named ``<stem>-<part name>``, with characters other than
@@ -1005,6 +1032,7 @@ def Save(
     paint = _painter(image) if image is not None else None
     diagrams = Diagram(
             subject,
+            live=live,
             limit=limit,
             direction=direction,
             format=format,

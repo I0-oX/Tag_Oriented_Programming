@@ -35,38 +35,42 @@
 - **Diagrams:** `TopKit.diagram.Diagram(agent)` returns Mermaid flowcharts
   (with front matter setting `wrappingWidth: 360`) of an Agent's Geometry,
   or of a Tag's Form and Pins, by name. Charts run top to bottom;
-  `direction="LR"` draws them left to right, wider and shorter. The host
-  is a capsule showing its name, a thin rule and its own fields. Each Tag
-  is one box whose shape
-  says what it is — rounded for a Tag, a hexagon for a Pin, a flag for a
-  Flag — with a thin rule and one line per declaration. On an Agent the
-  name starts with its Overlay place, `①` to `⑳` then `21 · Name`, plus
-  ` · Pin` / ` · Flag` for those kinds; Ripped Tags and a Tag's Form have
-  no number. The kind word is coloured blue for checks, green for state
-  and purple for behaviour, followed by the name. A Record shows what its
-  Layer contributed: `= value`, `+ item, item` for a list, tuple, string
-  or dict it extends, `+18 → 42` for a number. A Post ends in `✓ holds` in
-  green or `✗ BROKEN` in red. Quiet italic lines under a declaration show
-  `now value` when the Agent's value changed after tagging and
-  `↳ underlay Kin`, `↳ replaces Kin` or `↳ deletes X` where a Layer covers
-  a Tag in another chart. Layering in one chart is an arrow from the
-  earlier Tag to the later one, labelled with the relation and the names
-  it shares, and coloured purple (`#8b5cf6`) for `underlay`, amber
-  (`#f59e0b`) for `replaces` or red (`#ef4444`) for `deletes`. Both formats
-  join boxes with thick dashed arrows; Mermaid crosses out replaces and
-  deletes.
-  Arrows run from the host to a Tag and from a Base to its Shape, with
-  dotted arrows for Pins and Ripped Tags. A Geometry with more than
-  `limit` Tags (40 by default, a soft limit) is divided by the module that
-  declares each family's top Base, one chart per module, named for it; a
-  family of Tags is never split, and a module still above the limit is
-  split between families into `module (2)` and so on. `format="graphviz"`
-  gives the same charts as Graphviz DOT, with the same titles, box shapes
-  and centred rows: the kind word coloured the same way, `✓ holds` /
-  `✗ BROKEN`, the same italic `now` and `↳` lines, and the same layering
-  arrows from box to box. `Save(agent, path)` writes each chart as a
-  `.mmd` (or `.dot`) file, with no dependency; with Graphviz, `image="svg"`
-  or `"png"` also draws it with the `dot` command.
+  `direction="LR"` draws them left to right, wider and shorter. By default
+  they show the code's structure: no values, Post verdicts or Ripped Tags,
+  and no user checks run. `live=True` adds one object's state. The host is
+  a capsule showing its name, a thin rule and its own field names (values
+  with `live=True`). Each Tag is one box whose shape says what it is —
+  rounded for a Tag, a hexagon for a Pin, a flag for a Flag — with a thin
+  rule and one line per declaration. On an Agent the name starts with its
+  Overlay place, `①` to `⑳` then `21 · Name`, plus ` · Pin` / ` · Flag` for
+  those kinds; a Tag's Form has no number. The kind word is coloured blue
+  for checks, green for state and purple for behaviour, followed by the
+  name. With `live=True`, a Record shows what its Layer contributed:
+  `= value`, `+ item, item` for a list, tuple, string or dict it extends,
+  `+18 → 42` for a number; a Post ends in `✓ holds` in green or `✗ BROKEN`
+  in red, with a red border on a broken Tag; and a quiet italic `now value`
+  line follows a value changed after tagging. Contributions and `now`
+  compare the values each Layer left, so a mutable value changed in place
+  shows only its final value. Quiet italic `↳ underlay Kin`,
+  `↳ replaces Kin` or `↳ deletes X` names a Layer in another chart. Layering
+  in one chart is an arrow from the earlier Tag to the later one, labelled
+  with the relation and the names it shares, and coloured purple
+  (`#8b5cf6`) for `underlay`, amber (`#f59e0b`) for `replaces` or red
+  (`#ef4444`) for `deletes`. Both formats join boxes with thick dashed
+  arrows; Mermaid crosses out replaces and deletes. Arrows run from the
+  host to a Tag and from a Base to its Shape, with dotted arrows for Pins;
+  with `live=True`, Ripped Tags appear dashed with `ripped` arrows. A
+  Geometry with more than `limit` Tags (40 by default, a soft limit) is
+  divided by the module that declares each family's top Base, one chart
+  per module, named for it; a family of Tags is never split, and a module
+  still above the limit is split between families into `module (2)` and so
+  on. `format="graphviz"` gives the same charts as Graphviz DOT, with the
+  same titles, box shapes and centred rows: the kind word coloured the
+  same way and, with `live=True`, the same `✓ holds` / `✗ BROKEN`, italic
+  `now` and the same layering arrows from box to box. `Save(agent, path)`
+  writes each chart as a `.mmd` (or `.dot`) file, with no dependency and
+  the same `live` option; with Graphviz, `image="svg"` or `"png"` also
+  draws it with the `dot` command.
 
 - **Pin declarations and native Targets:** `class Rare(Pin)` declares a
   concrete Pin. Ordinary Tags apply to object instances; named Pins apply
