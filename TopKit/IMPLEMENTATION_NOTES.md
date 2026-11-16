@@ -34,7 +34,7 @@ tracks splitting them by idea without changing semantics.
 | `access.py` | the hooks on the runtime type, Agent-bound views |
 | `tags.py` | `Tag` and its metaclass |
 | `queries.py` | `Apply`, `Form`, `Keyword`, `Tags`, `Outline` |
-| `diagram.py` | `Diagram`, `Save`: an Agent's Geometry as Mermaid (`.mmd`) or Graphviz (`.dot`) — a host capsule and one box per Tag (rounded / hexagon / flag by kind), each with a divider and one line per declaration, the kind word coloured blue / green / purple, Record values, ` · BROKEN` / ` · holds` on a Post and ` · underlay` / ` · replaces` / ` · deletes` in italics; Graphviz instead draws one row per declaration with coloured kind words, `holds`/`BROKEN` and dotted layering links; SVG or PNG of the Graphviz charts through Graphviz's `dot` |
+| `diagram.py` | `Diagram`, `Save`: an Agent's Geometry as Mermaid (`.mmd`, with `wrappingWidth: 360` front matter) or Graphviz (`.dot`) — the same numbered titles (①…⑳ then `21 ·`, plus ` · Pin` / ` · Flag`) and box shapes (rounded / hexagon / flag) on a host capsule with its fields; a `─` divider and one centred line per declaration, the kind word coloured blue / green / purple, per-Layer Record contributions (`= value`, `+ added`, `+n → total`), `✓ holds` / `✗ BROKEN`, and a quiet italic `now value` line; `↳ underlay` / `↳ replaces` / `↳ deletes` words appear only when the earlier Layer is in another chart, while layers in one chart get bold dashed box-to-box arrows from the earlier Tag to the later one in both formats, labelled with the relation and shared names and coloured purple / amber / red; SVG or PNG of the Graphviz charts through Graphviz's `dot` |
 | `memo.py` | owner-local Tag memos and snapshots of changing Tag namespaces |
 
 ## The access design

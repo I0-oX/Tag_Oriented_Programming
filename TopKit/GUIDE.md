@@ -1308,20 +1308,30 @@ your Reports and Operations there.
 `TopKit.diagram` draws what the tables above answer one at a time: the
 Geometry, and what each Tag declares. `Diagram(agent)` returns Mermaid
 charts by name, with no dependency; paste a chart in any Mermaid viewer.
-The host is a capsule showing its name, a thin rule, then its own fields.
-Everything else is one box per Tag, and the shape says what the Tag is:
-rounded for a Tag, a hexagon for a Pin, a flag for a Flag. A box shows the
-Tag's name, a thin rule, then one line per declaration, kind first: the
-kind word is blue for checks (Pre, Post, Imprint), green for state
-(Record, Report) and purple for behaviour (Action, Operation, Rip,
-Delete), followed by the name and, for a Record on an Agent, the value it
-holds now. A Post ends in ` · BROKEN` in red when its promise fails, or
-` · holds` in green when it holds; where a Layer covers an earlier one,
-the line adds ` · underlay Kin`, ` · replaces Kin` or ` · deletes X` in
-italics. Arrows run from the host to a Tag and from a Base to its Shape,
-with dotted arrows for Pins and Ripped Tags. When a chart holds Tags of
-several modules, each module is a box. `Diagram(Wizard)` draws a Tag's
-Form and the Pins it carries.
+Mermaid files carry front matter that widens wrapping to 360, which GitHub
+honours. The host is a capsule showing its name, a thin rule, then its own
+fields. Everything else is one box per Tag, and the shape says what the Tag
+is: rounded for a Tag, a hexagon for a Pin, a flag for a Flag. On an Agent
+a box's name starts with its place in the Overlay: `① Species`, `② Elf`, …,
+`⑳`, then `21 · Name`; a Pin or Flag adds ` · Pin` / ` · Flag`. Ripped Tags
+and a Tag's Form have no number. A thin rule follows, then one line per
+declaration, kind first: the kind word is blue for checks (Pre, Post,
+Imprint), green for state (Record, Report) and purple for behaviour
+(Action, Operation, Rip, Delete), then the name. A Record on an Agent shows
+what that Layer contributed: `= value` when it sets one, `+ item, item`
+for a list, tuple, string or dict it extends, `+18 → 42` for a number. A
+Post ends in `✓ holds` in green or `✗ BROKEN` in red. Quiet italic lines
+follow the declaration when the Agent's value changed after tagging
+(`now value`) or a Layer covers a Tag in another chart (`↳ underlay Kin`,
+`↳ replaces Kin`, `↳ deletes X`). In one chart, layering is an arrow from
+the earlier Tag to the later one, labelled with the relation and the
+names it shares (`replaces Mana`): purple for `underlay`, amber for
+`replaces`, red for `deletes`. Both formats join boxes with thick dashed
+arrows; Mermaid crosses out replaces and deletes. Arrows also run from
+the host to a Tag and from a Base to its Shape, with dotted arrows for
+Pins and Ripped Tags.
+When a chart holds Tags of several modules, each module is a box.
+`Diagram(Wizard)` draws a Tag's Form and the Pins it carries.
 
 ```python
 import re
@@ -1350,12 +1360,23 @@ sol = Character("Sol", level=1)
 sol.focus = 1
 Mage(sol)
 sol.focus = 0                                   # the promise breaks
+sol.Mana = 42                                   # the value moves on
 
 chart = Diagram(sol)["Character"]               # charts by name
 plain = re.sub(r"<[^>]*>", "", chart)           # drop the colour markup
+assert chart.startswith("---\nconfig:\n  flowchart:\n    wrappingWidth: 360\n---\n")
 assert 'focus = 0' in plain                      # a host field
-assert 'Post Has_Focus · BROKEN' in plain
-assert 'Record Mana = 10 · replaces Being' in plain   # a Record value
+assert '① Being' in plain                        # Overlay layer numbers
+assert '② Mage' in plain
+assert 'Record Mana = 1' in plain                # what each layer set
+assert 'Post Has_Focus ✗ BROKEN' in plain        # the promise breaks
+assert 'Record Mana = 10' in plain
+assert 'now 42' in plain                         # a value changed since tagging
+assert 't0 -.-x|replaces Mana| t1' in plain        # earlier -> later
+assert 'linkStyle 2 stroke:#d97706,stroke-width:2.5px,stroke-dasharray:8 5,color:#d97706' in plain
+dot = Diagram(sol, format="graphviz")["Character"]
+assert 't0 -> t1 [style=dashed, penwidth=2.2' in dot  # same pair, box to box
+assert 'label=" replaces Mana "' in dot              # same label
 assert 'Action Cast' in plain
 ```
 
@@ -1375,16 +1396,15 @@ the same file name. A `.mmd` needs no picture: GitHub, VS Code and
 mermaid.live draw it.
 
 `format="graphviz"` gives the same charts as Graphviz DOT instead, in
-`Diagram` and `Save` (`sol.dot`). There each Tag is a box holding one HTML
-table row per declaration: the kind word is coloured blue for checks
-(Pre, Post, Imprint), green for state (Record, Report) and purple for
-behaviour (Action, Operation, Rip, Delete). A Post adds `holds` in green
-when it holds or turns red with `BROKEN` when it fails. Where a Layer
-covers an earlier one, a dotted, labelled arrow runs between the two rows,
-reading `underlay`, `replaces` or `deletes`; when the earlier Layer is in
-another chart, the words stay on the row instead. With it, `image="svg"`
-or `image="png"` also draws each chart beside its `.dot` with Graphviz's
-own `dot` command, which must be installed.
+`Diagram` and `Save` (`sol.dot`): the same numbered titles and box shapes,
+and one centred HTML table row per declaration, with the same coloured
+kind words and `✓ holds` / `✗ BROKEN`. The italic `now value` and `↳`
+lines read the same as in Mermaid; bold dashed layering arrows run box to
+box from the earlier Tag to the later one, with the same labels and colours.
+Arrows between Tags and dotted links for Pins and Ripped Tags remain.
+With it, `image="svg"` or `image="png"` also draws
+each chart beside its `.dot` with Graphviz's own `dot` command, which must
+be installed.
 
 ---
 

@@ -6,24 +6,27 @@ Graphviz.
 Graphviz ``.dot`` with ``format="graphviz"``; both need nothing outside the
 standard library. With ``format="graphviz"``, ``Save(..., image="svg")`` or
 ``image="png"`` also draws each file with Graphviz's ``dot`` command.
+Mermaid files carry front matter that widens wrapping to 360.
 
-Mermaid draws one box per Tag: rounded for a Tag, a hexagon for a Pin and
-a flag for a Flag. A box shows the Tag's name, a thin divider, then one
-line per declaration: the kind word coloured blue for checks, green for
-state and purple for behaviour, then the name and the Record's value on
-an Agent. A Post adds `` · BROKEN`` in red or `` · holds`` in green; where
-two Layers give the same name, the later one adds `` · underlay Kin``,
-`` · replaces Capped`` or `` · deletes X`` in italics. The host is a
-capsule with its name, a divider and its own fields. Arrows run from the
-host to a Tag and from a Base to its Shape; Pins and Ripped Tags are
-linked with dotted arrows. When a chart holds Tags of several modules,
-each module is a box.
-
-Graphviz instead draws each Tag as an HTML-table node with one row per
-declaration: the kind word is coloured blue for checks, green for state
-and purple for behaviour, a Post adds ``holds`` in green or turns red with
-``BROKEN``, and a dotted, labelled link runs between the rows of two
-Layers that give the same name.
+Both formats draw one box per Tag: rounded for a Tag, a hexagon for a Pin
+and a flag for a Flag, with the host as a capsule holding its name, a thin
+divider and its own fields. On an Agent a box's title starts with its
+Overlay place as a circled number (``①`` to ``⑳``, then ``21 ·``); a Pin
+or Flag adds `` · Pin`` or `` · Flag``. Ripped Tags and a Tag's Form have
+no number. A thin divider, then one line per declaration: the kind word
+coloured blue for checks, green for state and purple for behaviour, then
+the name. A Record shows what its Layer contributed: ``= value``,
+``+ item, item`` for a list, tuple, string or dict, or ``+18 → 42`` for a
+number. A Post shows ``✓ holds`` in green or ``✗ BROKEN`` in red. A quiet
+italic ``now value`` line follows a changed value; ``↳ underlay Kin``,
+``↳ replaces Kin`` or ``↳ deletes X`` names a Layer in another chart.
+Layers in one chart get bold dashed arrows from the earlier Tag to the
+later one, labelled with the relation and shared names and coloured
+purple, amber or red; both formats join boxes, and Mermaid crosses out
+replaces and deletes. Arrows also run from the host to a
+Tag and from a Base to its Shape; Pins and Ripped Tags are linked with
+dotted arrows. When a chart holds Tags of several modules, each module is
+a box.
 
 A diagram with more Tags than ``limit`` is divided by code: each family of
 Tags joined through Bases goes to the module that declares its top Base,
@@ -105,6 +108,14 @@ _MERMAID_SHAPES = {
         "pin": ("{{", "}}"),
         "flag": (">", "]"),
         }
+# The same shapes in Graphviz: rounded for a Tag, a hexagon for a Pin, a
+# flag for a Flag.
+_DOT_SHAPES = {
+        "tag": "shape=box",
+        "pin": "shape=hexagon",
+        "flag": "shape=cds",
+        }
+# Layering arrows by how the later Tag covers the earlier one.
 _LINK_COLORS = {"underlay": "#7c3aed", "replaces": "#d97706", "deletes": "#e5484d"}
 # Names that layer on an Agent, so a later Tag can extend or cover them.
 _OVERLAID = frozenset(("Record", "Action", "Rip", "Post", "Delete"))
@@ -195,6 +206,49 @@ def _shown(
     except Exception:
         text = f"<{type(value).__name__}>"
     return text if len(text) <= 40 else text[:39] + "…"
+
+
+def _same(
+        one: object,
+        other: object,
+        ) -> bool:
+    """Whether two held values are the same; a failing ``==`` says no."""
+
+    try:
+        return one is other or bool(one == other)
+    except Exception:
+        return False
+
+
+def _change(
+        before: object,
+        after: object,
+        ) -> str:
+    """What a Record layer added to the value under it: new items of a list,
+    tuple, string or dict, or the step of a number; else the new value."""
+
+    try:
+        if (
+                isinstance(before, (list, tuple)) and isinstance(after, (list, tuple))
+                and len(after) > len(before) and list(after[:len(before)]) == list(before)
+                ):
+            return "+ " + ", ".join(_shown(item) for item in after[len(before):])
+        if (
+                isinstance(before, str) and isinstance(after, str)
+                and len(after) > len(before) and after.startswith(before)
+                ):
+            return "+ " + _shown(after[len(before):])
+        if (
+                isinstance(before, dict) and isinstance(after, dict)
+                and len(after) > len(before) and all(k in after and _same(v, after[k]) for k, v in before.items())
+                ):
+            return "+ " + ", ".join(f"{_shown(k)}: {_shown(v)}" for k, v in after.items() if k not in before)
+        if type(before) in (int, float) and type(after) in (int, float) and before != after:
+            return f"{after - before:+g} → {_shown(after)}"
+    except Exception:
+        pass
+
+    return f"= {_shown(after)}"
 
 
 def _namespace(
@@ -305,19 +359,59 @@ class _Graph:
 
                 latest[member.name] = (tag, index)
 
-        # The value each visible Record holds, and the host's own fields.
+        # What each Record layer put in, read from the snapshot TopKit keeps
+        # after each Tag: a Record that extends shows what it added
+        # (``+ 'Magic Missile'``), one that sets shows its value; the
+        # visible layer adds what the Agent holds now when that changed since.
         self.values: dict[tuple[type, str], str] = {}
+        self.now: dict[tuple[type, str], str] = {}
+        self.layers: dict[type, int] = {}
         self.fields: list[tuple[str, str]] = []
 
         if self.has_host:
             namespace = _namespace(subject)
+            self.layers = {tag: number for number, tag in enumerate(active, 1)}
+            snapshots = state.snapshots if state is not None else {}
+
+            def held(tag: type, name: str) -> object:
+                snapshot = snapshots.get(tag)
+                return _MISSING if snapshot is None else snapshot.records.get(name, _MISSING)
+
+            before: dict[str, object] = {}
+
+            for tag in active:
+                for member in self.members.get(tag, ()):
+                    if member.kind == "Delete":
+                        before.pop(member.name, None)
+                        continue
+                    if member.kind != "Record" or "secret" in member.marks:
+                        continue
+
+                    after = held(tag, member.name)
+
+                    if after is _MISSING:
+                        continue
+
+                    prior = before.get(member.name, _MISSING)
+                    self.values[tag, member.name] = (
+                            _change(prior, after) if member.extends and prior is not _MISSING
+                            else f"= {_shown(after)}"
+                            )
+                    before[member.name] = after
 
             for name, (tag, index) in latest.items():
                 member = self.members[tag][index]
-                value = namespace.get(name, _MISSING)
+                now = namespace.get(name, _MISSING)
 
-                if member.kind == "Record" and "secret" not in member.marks and value is not _MISSING:
-                    self.values[tag, name] = _shown(value)
+                if member.kind != "Record" or "secret" in member.marks or now is _MISSING:
+                    continue
+
+                had = held(tag, name)
+
+                if had is _MISSING:
+                    self.values[tag, name] = f"= {_shown(now)}"
+                elif not _same(had, now):
+                    self.now[tag, name] = _shown(now)
 
             taken = {m.name for rows in self.members.values() for m in rows}
 
@@ -453,26 +547,41 @@ def _by_module(
 
 
 def _title(
+        graph: _Graph,
         tag: type,
         ) -> str:
-    """A Tag box's title: its name, and what it is when not a plain Tag."""
+    """A Tag box's title: on an Agent its place in the Overlay, counted
+    from the first Tag applied; its name; and what it is when not a plain
+    Tag."""
 
+    layer = graph.layers.get(tag)
     kind = _kind(tag)
-    return tag.__name__ if kind == "tag" else f"{tag.__name__} · {kind.title()}"
+    title = tag.__name__ if kind == "tag" else f"{tag.__name__} · {kind.title()}"
+
+    if layer is None:
+        return title
+    # ① to ⑳ read as a place in the stack; past twenty, a plain number.
+    mark = chr(0x2460 + layer - 1) if layer <= 20 else f"{layer} ·"
+    return f"{mark} {title}"
 
 
 def _row(
         graph: _Graph,
         tag: type,
         member: _Member,
+        now: bool = True,
         ) -> str:
-    """A row's text: kind, name, the value it holds and its marks."""
+    """A row's text: kind, name, what the layer put in it, what the Agent
+    holds now when that changed since (unless ``now`` is false) and marks."""
 
     text = f"{member.kind} {member.name}"
     value = graph.values.get((tag, member.name))
+    held = graph.now.get((tag, member.name)) if now else None
 
     if value is not None:
-        text += f" = {value}"
+        text += f" {value}"
+    if held is not None:
+        text += f" → now {held}"
     if member.marks:
         text += f" ({', '.join(member.marks)})"
     return text
@@ -501,9 +610,27 @@ def _notes(
 
     for tag, index, prior, _, relation in graph.links:
         if tag in drawn and (every or prior not in drawn):
-            notes.setdefault((tag, index), []).append(f"{relation} {prior.__name__}")
+            notes.setdefault((tag, index), []).append(f"↳ {relation} {prior.__name__}")
 
     return notes
+
+
+def _layerings(
+        graph: _Graph,
+        part: list[type],
+        ) -> dict[tuple[type, type, str], list[str]]:
+    """The layerings drawn as arrows in a chart, one per pair of Tags and
+    relation, with the names they share: ``(Elf, Wizard, "underlay")`` →
+    ``["spells"]``. Those reaching into another chart stay as words."""
+
+    drawn = set(part)
+    arrows: dict[tuple[type, type, str], list[str]] = {}
+
+    for tag, index, prior, _, relation in graph.links:
+        if tag in drawn and prior in drawn:
+            arrows.setdefault((prior, tag, relation), []).append(graph.members[tag][index].name)
+
+    return arrows
 
 
 def _paint(
@@ -522,36 +649,65 @@ def _rgb(
     return "rgb({},{},{})".format(*(int(color[i:i + 2], 16) for i in (1, 3, 5)))
 
 
+@dataclass(frozen=True, slots=True)
+class _Line:
+    """One declaration as both formats draw it."""
+
+    kind: str
+    text: str                 # name, what the layer put in, marks
+    holds: bool | None        # a Post's verdict here, else None
+    extras: tuple[str, ...]   # quiet lines under it: now …, ↳ underlay …
+
+
+def _lines(
+        graph: _Graph,
+        tag: type,
+        notes: dict[tuple[type, int], list[str]],
+        ) -> list[_Line]:
+    """The box's lines, one per declaration. What the Agent holds now and
+    how the row layers each go on a quiet line of their own, so no line
+    grows long enough to wrap mid-phrase."""
+
+    lines = []
+
+    for index, member in enumerate(graph.members[tag]):
+        now = graph.now.get((tag, member.name))
+        lines.append(_Line(
+                member.kind,
+                _row(graph, tag, member, now=False)[len(member.kind) + 1:],
+                _holds(graph, tag, member),
+                tuple(([f"now {now}"] if now is not None else []) + notes.get((tag, index), [])),
+                ))
+
+    return lines
+
+
 def _summary(
         graph: _Graph,
         tag: type,
         notes: dict[tuple[type, int], list[str]],
         ) -> list[str]:
     """The box's lines after its title, as Mermaid label HTML: a quiet
-    divider, then one line per declaration, kind first and colored by what
-    it does, then its value, whether a Post holds, and how it layers over an
-    earlier Tag. A Ripped Tag's lines stay plain: its class greys them."""
+    divider, then each declaration with its kind colored by what it does.
+    A Ripped Tag's lines stay plain: its class greys them."""
 
     plain = tag in graph.ripped
-    lines = []
+    rows = []
 
-    for index, member in enumerate(graph.members[tag]):
-        kind = _text(member.kind)
-        line = (kind if plain else _paint(_rgb(_COLORS[_FAMILY[member.kind]]), kind))
-        line += " " + _text(_row(graph, tag, member)[len(member.kind) + 1:])
-        holds = _holds(graph, tag, member)
+    for line in _lines(graph, tag, notes):
+        kind = _text(line.kind)
+        html = (kind if plain else _paint(_rgb(_COLORS[_FAMILY[line.kind]]), kind))
+        html += " " + _text(line.text)
 
-        if holds is False:
-            line += " · " + _paint(_rgb("#e5484d"), "BROKEN")
-        elif holds and not plain:
-            line += " · " + _paint(_rgb("#059669"), "holds")
+        if line.holds is False:
+            html += " " + _paint(_rgb("#e5484d"), "✗ BROKEN")
+        elif line.holds and not plain:
+            html += " " + _paint(_rgb("#059669"), "✓ holds")
 
-        for note in notes.get((tag, index), ()):
-            line += f" · <i>{_text(note)}</i>"
+        html += "".join(f"<br><i>{_text(extra)}</i>" for extra in line.extras)
+        rows.append(html)
 
-        lines.append(line)
-
-    return ["─" * 14, *lines] if lines else []
+    return ["─" * 14, *rows] if rows else []
 
 
 def _mermaid(
@@ -562,7 +718,9 @@ def _mermaid(
         ) -> str:
     ids: dict[object, str] = {tag: f"t{i}" for i, tag in enumerate(graph.tags)}
     ids[_HOST] = "host"
-    lines = [f"flowchart {direction}"]
+    # Wider wrapping than Mermaid's default, so a declaration's line does
+    # not break mid-phrase. GitHub honours this front matter.
+    lines = ["---", "config:", "  flowchart:", "    wrappingWidth: 360", "---", f"flowchart {direction}"]
     classes = []
 
     if graph.has_host:
@@ -573,7 +731,7 @@ def _mermaid(
         lines.append(f'  host(["{"<br>".join([*head, *(["─" * 14, *fields] if fields else [])])}"])')
         classes.append("  class host host")
 
-    notes = _notes(graph, part, every=True)
+    notes = _notes(graph, part, every=False)
     modules = _by_module(part)
     boxed = len(modules) > 1
 
@@ -584,7 +742,7 @@ def _mermaid(
             lines.append(f'  subgraph m{number}["{_text(module)}"]')
 
         for tag in tags:
-            label = "<br>".join([_text(tag.__name__), *_summary(graph, tag, notes)])
+            label = "<br>".join([_text(_title(graph, tag)), *_summary(graph, tag, notes)])
             opening, closing = _MERMAID_SHAPES[_kind(tag)]
             lines.append(f'{indent}{ids[tag]}{opening}"{label}"{closing}')
             look = _look(graph, tag)
@@ -597,11 +755,22 @@ def _mermaid(
             classes.append(f"  class m{number} module")
 
     drawn = set(part)
+    count = 0                                  # Mermaid numbers its links
+    painted: dict[str, list[int]] = {}
 
     for source, shape, label in graph.arrows:
         if shape in drawn:
             arrow = f"-.->|{label}|" if label else "-->"
             lines.append(f"  {ids[source]} {arrow} {ids[shape]}")
+            count += 1
+
+    # Layering runs from the earlier Tag to the later one, as the stack grows.
+    for (prior, tag, relation), names in _layerings(graph, part).items():
+        head = "-.->" if relation == "underlay" else "-.-x"
+        label = _text(f"{relation} {', '.join(names)}")
+        lines.append(f"  {ids[prior]} {head}|{label}| {ids[tag]}")
+        painted.setdefault(relation, []).append(count)
+        count += 1
 
     used = {line.rsplit(" ", 1)[1] for line in classes}
     lines.extend(
@@ -610,6 +779,11 @@ def _mermaid(
             if look in used
             )
     lines.extend(classes)
+    lines.extend(
+            f"  linkStyle {','.join(map(str, numbers))} stroke:{_LINK_COLORS[relation]},"
+            f"stroke-width:2.5px,stroke-dasharray:8 5,color:{_LINK_COLORS[relation]}"
+            for relation, numbers in painted.items()
+            )
 
     return "\n".join(lines) + "\n"
 
@@ -630,10 +804,11 @@ def _table(
         title: str,
         rows: list[tuple[str, str]],
         ) -> str:
-    """An HTML label: a title, a rule, then one left-aligned row per port."""
+    """An HTML label: a title, a rule, then one centered row per port, as
+    the Mermaid box sets them."""
 
-    head = f'<TR><TD ALIGN="CENTER">{title}</TD></TR>'
-    body = "".join(f'<TR><TD ALIGN="LEFT" PORT="{port}">{html}</TD></TR>' for port, html in rows)
+    head = f"<TR><TD>{title}</TD></TR>"
+    body = "".join(f'<TR><TD PORT="{port}">{html}</TD></TR>' for port, html in rows)
     return (
             '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2">'
             f"{head}{'<HR/>' if rows else ''}{body}</TABLE>>"
@@ -677,37 +852,27 @@ def _graphviz(
             lines.append(f"    graph [label={_quoted(module)}, {_DOT_LOOKS['module']}];")
 
         for tag in tags:
-            gone = tag in graph.ripped
-            kind = _kind(tag)
-            title = _html(tag.__name__)
-
-            if kind != "tag":
-                title += small.format(tint.format("#64748b", f" · {kind.title()}"))
-
+            plain = tag in graph.ripped
+            title = _html(_title(graph, tag))
             rows = []
 
-            for index, member in enumerate(graph.members[tag]):
-                holds = _holds(graph, tag, member)
-                rest = _html(_row(graph, tag, member)[len(member.kind):])
-                word = _html(member.kind)
+            # The same lines as the Mermaid box, said the same way.
+            for index, line in enumerate(_lines(graph, tag, notes)):
+                kind = _html(line.kind)
+                html = kind if plain else tint.format(_COLORS[_FAMILY[line.kind]], kind)
+                html += " " + _html(line.text)
 
-                if holds is False:
-                    html = tint.format("#e5484d", f"{word}{rest} BROKEN")
-                elif gone:
-                    html = f"{word}{rest}"
-                else:
-                    html = tint.format(_COLORS[_FAMILY[member.kind]], word) + rest
-                    if holds:
-                        html += tint.format("#059669", " holds")
+                if line.holds is False:
+                    html += " " + tint.format("#e5484d", "✗ BROKEN")
+                elif line.holds and not plain:
+                    html += " " + tint.format("#059669", "✓ holds")
 
-                for note in notes.get((tag, index), ()):
-                    html += "<BR/>" + tint.format("#64748b", f"<I>{_html(note)}</I>")
-
+                html += "".join(f"<BR/><I>{_html(extra)}</I>" for extra in line.extras)
                 rows.append((f"m{index}", small.format(html)))
 
             look = _look(graph, tag)
             extra = f", {_DOT_LOOKS[look]}" if look else ""
-            lines.append(f"{indent}{ids[tag]} [label={_table(title, rows)}{extra}];")
+            lines.append(f"{indent}{ids[tag]} [label={_table(title, rows)}, {_DOT_SHAPES[_kind(tag)]}{extra}];")
 
         if boxed:
             lines.append("  }")
@@ -719,15 +884,18 @@ def _graphviz(
             extra = f" [style=dashed, label={_quoted(f' {label} ')}]" if label else ""
             lines.append(f"  {ids[source]} -> {ids[shape]}{extra};")
 
-    for tag, index, prior, row, relation in graph.links:
-        if tag in drawn and prior in drawn:
-            color = _LINK_COLORS[relation]
-            head = "normal" if relation == "underlay" else "tee"
-            lines.append(
-                    f"  {ids[tag]}:m{index} -> {ids[prior]}:m{row} [style=dotted,"
-                    f' constraint=false, color="{color}", fontcolor="{color}",'
-                    f" arrowhead={head}, label={_quoted(f' {relation} ')}];"
-                    )
+    # Layering runs from the earlier Tag to the later one, as the stack
+    # grows: the same arrows as the Mermaid chart, bold and dashed so they
+    # stand apart from the thin Base arrows.
+    for (prior, tag, relation), names in _layerings(graph, part).items():
+        color = _LINK_COLORS[relation]
+        head = "normal" if relation == "underlay" else "tee"
+        label = f" {relation} {', '.join(names)} "
+        lines.append(
+                f"  {ids[prior]} -> {ids[tag]} [style=dashed, penwidth=2.2,"
+                f' arrowsize=1, color="{color}", fontcolor="{color}", fontsize=10,'
+                f" arrowhead={head}, label={_quoted(label)}];"
+                )
 
     lines.append("}")
 
