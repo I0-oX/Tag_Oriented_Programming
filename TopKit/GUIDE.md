@@ -1305,45 +1305,48 @@ your Reports and Operations there.
 
 ## Drawing an Agent
 
-`TopKit.diagram` draws how the code works, not one object's case: the
-Geometry, what each Tag declares and how the Layers relate. `Diagram(agent)`
-returns Mermaid charts by name, with no dependency; paste a chart in any
-Mermaid viewer. Charts run top to bottom; pass `direction="LR"` to draw one
-left to right, wider and shorter. Mermaid files carry front matter that
-widens wrapping to 360, which GitHub honours.
+`TopKit.diagram` draws how the code is built: one box per Tag with what it
+declares, the order the Layers apply, and which Tag underlays, replaces or
+deletes which. `Save` writes Mermaid `.mmd` files that GitHub, VS Code and
+mermaid.live show directly, with no picture to build and nothing to install.
 
-By default the host is a capsule showing its name, a thin rule, then its
-own field names, with no values. Everything else is one box per Tag, and
-the shape says what the Tag is: rounded for a Tag, a hexagon for a Pin, a
-flag for a Flag. On an Agent a box's name starts with its place in the
-Overlay: `① Species`, `② Elf`, …, `⑳`, then `21 · Name`; a Pin or Flag adds
-` · Pin` / ` · Flag`. A Tag's Form has no number. A thin rule follows, then
-one line per declaration, kind first: the kind word is blue for checks
-(Pre, Post, Imprint), green for state (Record, Report) and purple for
-behaviour (Action, Operation, Rip, Delete), then the name. Quiet italic
-lines name a Layer in another chart (`↳ underlay Kin`, `↳ replaces Kin`,
-`↳ deletes X`). In one chart, layering is an arrow from the earlier Tag to
-the later one, labelled with the relation and the names it shares
-(`replaces Mana`): purple for `underlay`, amber for `replaces`, red for
-`deletes`. Both formats join boxes with thick dashed arrows; Mermaid
-crosses out replaces and deletes. Arrows also run from the host to a Tag
-and from a Base to its Shape, with dotted arrows for Pins. When a chart
-holds Tags of several modules, each module is a box. `Diagram(Wizard)`
-draws a Tag's Form and the Pins it carries. No Post is checked and no
-Ripped Tag is drawn.
+Most days you just save:
 
-`live=True` adds one object's state to the same structure: host field
-values; what each Record Layer contributed, `= value` when it sets one,
-`+ item, item` for a list, tuple, string or dict it extends, `+18 → 42`
-for a number; `✓ holds` in green or `✗ BROKEN` in red on a Post, with a red
-border on the Tag that breaks; a quiet `now value` line when the Agent's
-value changed after tagging; and Ripped Tags, dashed with dotted `ripped`
-arrows. Contributions and `now` compare the values each Layer left: a
-mutable value changed in place rather than replaced shows only its final
-value. Pass `live=True` to `Save` too.
+```py
+from TopKit.diagram import Save
+
+Save(agent, "agent")                                  # writes agent.mmd
+Save(SomeTag, "tag")                                  # a Tag's Form and its Pins
+Save(agent, "agent", live=True)                       # this object's values, Post verdicts, Ripped Tags
+Save(agent, "agent", format="graphviz", image="png")  # .dot plus a picture; needs Graphviz installed
+Save(agent, "agent", direction="LR")                  # wide, left to right
+```
+
+To read a chart:
+
+- A box's shape says what it is: rounded for a Tag, a hexagon for a Pin, a
+  flag for a Flag. The capsule at the top is the host and its field names.
+- `①`, `②`, `③` ... are the order the Layers were applied. A Tag's own Form
+  has no number.
+- Each declaration starts with its kind, coloured blue for checks (Pre,
+  Post, Imprint), green for state (Record, Report), purple for behaviour
+  (Action, Operation, Rip, Delete).
+- One dashed arrow to the next Tag says how the later covers the earlier:
+  purple is `underlay`, amber is `replaces`, red is `deletes`.
+- Tags from several modules sit inside a dotted box named for each module.
+- With `live=True` you also see this object's values, `✓ holds` or
+  `✗ BROKEN` on each Post (a red border marks a broken Tag), and Ripped
+  Tags drawn dashed with a `ripped` arrow.
+
+A Geometry with more than 40 Tags is split by code, one chart per module;
+`Diagram` hands back `{name: text}` and `Save` writes one
+`name-<module>.mmd` per chart. The 40 is a soft limit: a family of Tags
+joined through Bases is never split, so one large family can fill a chart.
+Unsafe characters in a chart name are made safe for the file name.
+
+Here is a small one to run:
 
 ```python
-import re
 from TopKit.diagram import Diagram
 
 class Being(Tag):
@@ -1368,62 +1371,17 @@ class Mage(Being):
 sol = Character("Sol", level=1)
 sol.focus = 1
 Mage(sol)
-sol.focus = 0                                   # the promise breaks
-sol.Mana = 42                                   # the value moves on
+sol.focus = 0                               # the promise breaks
+sol.Mana = 42                               # a value moved on
 
-chart = Diagram(sol)["Character"]               # general: the code's structure
-plain = re.sub(r"<[^>]*>", "", chart)           # drop the colour markup
-assert chart.startswith("---\nconfig:\n  flowchart:\n    wrappingWidth: 360\n---\n")
-assert 'focus' in plain                          # a host field name, no value
-assert 'focus = 0' not in plain
-assert '① Being' in plain                        # Overlay layer numbers
-assert '② Mage' in plain
-assert 'Record Mana' in plain                    # a declaration, no value
-assert '= 10' not in plain
-assert 'BROKEN' not in plain
-assert 'now 42' not in plain
-assert 't0 -.-x|replaces Mana| t1' in plain       # earlier -> later
-assert 'linkStyle 2 stroke:#f59e0b,stroke-width:2.5px,stroke-dasharray:8 5' in plain
-assert 'Action Cast' in plain
+chart = Diagram(sol)["Character"]           # general: the code's structure
+print(chart)
+assert '① Being' in chart                   # the first Layer applied
+assert 'replaces Mana' in chart             # Mage's Record covers Being's
 
-live = Diagram(sol, live=True)["Character"]      # one object's state
-live_plain = re.sub(r"<[^>]*>", "", live)
-assert 'focus = 0' in live_plain                  # host field values
-assert 'Record Mana = 1' in live_plain            # what each layer set
-assert 'Post Has_Focus ✗ BROKEN' in live_plain    # the promise breaks
-assert 'Record Mana = 10' in live_plain
-assert 'now 42' in live_plain                     # a value changed since tagging
-dot = Diagram(sol, live=True, format="graphviz")["Character"]
-assert 't0 -> t1 [style=dashed, penwidth=2.2' in dot  # same pair, box to box
-assert 'label=" replaces Mana "' in dot              # same label
+live = Diagram(sol, live=True)["Character"] # one object's state
+assert '✗ BROKEN' in live                   # the Post now fails
 ```
-
-A Geometry with more Tags than `limit` (40 by default) is divided the way
-the code is: each family of Tags joined through Bases goes to the module
-that declares its top Base, and each module is one chart, named for it,
-such as `"game.species"`. The limit is soft. A family is never split, so
-no arrow is ever cut; only a module still above the limit is divided,
-between families, into `"game.species (2)"` and so on. When the division
-leaves a single chart, one big family, it keeps the Agent's name.
-
-`Save(sol, "sol")` writes the charts as Mermaid files: `sol.mmd`, or one
-`sol-<name>.mmd` per chart, where each run of characters other than a
-letter, digit, `_` or `-` becomes one `_`, and `_` at either end is
-trimmed (`"game.species (2)"` goes to `sol-game_species_2.mmd`), and
-`-2`, `-3` are added when two names make the same file name. A `.mmd`
-needs no picture: GitHub, VS Code and mermaid.live draw it.
-
-`format="graphviz"` gives the same charts as Graphviz DOT instead, in
-`Diagram` and `Save` (`sol.dot`): the same numbered titles and box shapes,
-and one centred HTML table row per declaration, with the same coloured
-kind words and, with `live=True`, the same `✓ holds` / `✗ BROKEN`. The
-italic `now value` and `↳` lines read the same as in Mermaid; bold dashed
-layering arrows run box to box from the earlier Tag to the later one, with
-the same labels and colours. Arrows between Tags and dashed links for Pins
-remain; with `live=True`, Ripped Tags and their dotted links remain too.
-With it, `image="svg"` or `image="png"` also draws
-each chart beside its `.dot` with Graphviz's own `dot` command, which must
-be installed.
 
 ---
 
