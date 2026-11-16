@@ -282,24 +282,24 @@ class DiagramTests(unittest.TestCase):
                 if re.match(r"^  (?:host|t\d+) (?:-->|-\.->|-\.-x)", line)
                 ]
         for label, line, color in (
-                (underlay, links.index(underlay), "#7c3aed"),
-                (replaces, links.index(replaces), "#d97706"),
+                (underlay, links.index(underlay), "#8b5cf6"),
+                (replaces, links.index(replaces), "#f59e0b"),
                 ):
             self.assertIn(
                     f"  linkStyle {line} stroke:{color},"
-                    f"stroke-width:2.5px,stroke-dasharray:8 5,color:{color}",
+                    f"stroke-width:2.5px,stroke-dasharray:8 5",
                     text,
                     )
 
         self.assertIn(
                 f"  {ids['Kin']} -> {ids['Mage']} [style=dashed, penwidth=2.2,"
-                ' arrowsize=1, color="#7c3aed", fontcolor="#7c3aed", fontsize=10,'
+                ' arrowsize=1, color="#8b5cf6", fontcolor="#8b5cf6", fontsize=10,'
                 ' arrowhead=normal, label=" underlay spells "];',
                 dot,
                 )
         self.assertIn(
                 f"  {ids['Kin']} -> {ids['Mage']} [style=dashed, penwidth=2.2,"
-                ' arrowsize=1, color="#d97706", fontcolor="#d97706", fontsize=10,'
+                ' arrowsize=1, color="#f59e0b", fontcolor="#f59e0b", fontsize=10,'
                 ' arrowhead=tee, label=" replaces Greet "];',
                 dot,
                 )
@@ -352,13 +352,16 @@ class DiagramTests(unittest.TestCase):
         ari = Agent()
         Elf(ari)
 
-        (mermaid,) = Diagram(ari, direction="LR").values()
-        (dot,) = Diagram(ari, direction="TD", format="graphviz").values()
+        (mermaid,) = Diagram(ari).values()
+        (dot,) = Diagram(ari, format="graphviz").values()
+        (wide,) = Diagram(ari, direction="LR").values()
+        (wide_dot,) = Diagram(ari, direction="LR", format="graphviz").values()
 
-        self.assertTrue(
-                mermaid.startswith("---\nconfig:\n  flowchart:\n    wrappingWidth: 360\n---\nflowchart LR\n")
-                )
+        head = "---\nconfig:\n  flowchart:\n    wrappingWidth: 360\n---\n"
+        self.assertTrue(mermaid.startswith(head + "flowchart TD\n"))       # the default
+        self.assertTrue(wide.startswith(head + "flowchart LR\n"))          # the option
         self.assertIn("rankdir=TB", dot)
+        self.assertIn("rankdir=LR", wide_dot)
 
     def test_each_module_of_a_chart_is_a_box(self) -> None:
         Species = type("Species", (Tag,), {"__module__": "game.species"})
@@ -456,7 +459,7 @@ class DiagramTests(unittest.TestCase):
         self.assertEqual(_kinds(labels["Bruiser"]), ["Post Strength_Capped ✗ BROKEN"])
         self.assertEqual(_kinds(labels["Capped"]), ["Post Strength_Capped"])
         self.assertIn(f"  class {boxes['Bruiser']} broken", text)
-        self.assertIn('Strength_Capped <FONT COLOR="#e5484d">✗ BROKEN</FONT>', dot)
+        self.assertIn('Strength_Capped <FONT COLOR="#ef4444">✗ BROKEN</FONT>', dot)
 
     def test_a_ripped_tag_stays_dashed(self) -> None:
         ari = Agent()

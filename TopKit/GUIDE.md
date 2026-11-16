@@ -1308,6 +1308,8 @@ your Reports and Operations there.
 `TopKit.diagram` draws what the tables above answer one at a time: the
 Geometry, and what each Tag declares. `Diagram(agent)` returns Mermaid
 charts by name, with no dependency; paste a chart in any Mermaid viewer.
+Charts run top to bottom; pass `direction="LR"` to draw one left to right,
+wider and shorter.
 Mermaid files carry front matter that widens wrapping to 360, which GitHub
 honours. The host is a capsule showing its name, a thin rule, then its own
 fields. Everything else is one box per Tag, and the shape says what the Tag
@@ -1373,7 +1375,7 @@ assert 'Post Has_Focus ✗ BROKEN' in plain        # the promise breaks
 assert 'Record Mana = 10' in plain
 assert 'now 42' in plain                         # a value changed since tagging
 assert 't0 -.-x|replaces Mana| t1' in plain        # earlier -> later
-assert 'linkStyle 2 stroke:#d97706,stroke-width:2.5px,stroke-dasharray:8 5,color:#d97706' in plain
+assert 'linkStyle 2 stroke:#f59e0b,stroke-width:2.5px,stroke-dasharray:8 5' in plain
 dot = Diagram(sol, format="graphviz")["Character"]
 assert 't0 -> t1 [style=dashed, penwidth=2.2' in dot  # same pair, box to box
 assert 'label=" replaces Mana "' in dot              # same label

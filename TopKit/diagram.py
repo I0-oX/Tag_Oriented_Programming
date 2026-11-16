@@ -84,7 +84,7 @@ _MERMAID_STYLES = {
         "host": "stroke-width:3px",
         "pin": "stroke:#d4a017,stroke-width:2px",
         "flag": "stroke:#0d9488,stroke-width:2px",
-        "broken": "stroke:#e5484d,stroke-width:3px",
+        "broken": "stroke:#ef4444,stroke-width:3px",
         "ripped": "stroke:#8b8b8b,stroke-dasharray:6 3,color:#8b8b8b",
         "module": "fill:none,stroke:#94a3b8,stroke-dasharray:4 4",
         }
@@ -100,7 +100,8 @@ _FAMILY = {
         "Rip": "act",
         "Delete": "act",
         }
-_COLORS = {"check": "#2563eb", "data": "#059669", "act": "#7c3aed"}
+# Mid tones that read on a light page and on a dark one alike.
+_COLORS = {"check": "#3b82f6", "data": "#10b981", "act": "#8b5cf6"}
 # What a Tag is picks its box in Mermaid: rounded for a Tag, a hexagon for
 # a Pin, a flag for a Flag.
 _MERMAID_SHAPES = {
@@ -116,7 +117,7 @@ _DOT_SHAPES = {
         "flag": "shape=cds",
         }
 # Layering arrows by how the later Tag covers the earlier one.
-_LINK_COLORS = {"underlay": "#7c3aed", "replaces": "#d97706", "deletes": "#e5484d"}
+_LINK_COLORS = {"underlay": "#8b5cf6", "replaces": "#f59e0b", "deletes": "#ef4444"}
 # Names that layer on an Agent, so a later Tag can extend or cover them.
 _OVERLAID = frozenset(("Record", "Action", "Rip", "Post", "Delete"))
 _REPR = reprlib.Repr(
@@ -134,7 +135,7 @@ _DOT_LOOKS = {
         "host": 'color="#334155", penwidth=1.8',
         "pin": 'color="#d4a017", penwidth=1.6',
         "flag": 'color="#0d9488", penwidth=1.6',
-        "broken": 'color="#e5484d", penwidth=2',
+        "broken": 'color="#ef4444", penwidth=2',
         "ripped": 'style="rounded,dashed", color="#8b8b8b", fontcolor="#8b8b8b"',
         "module": 'style="rounded,dashed", color="#94a3b8", fontcolor="#64748b"',
         }
@@ -700,9 +701,9 @@ def _summary(
         html += " " + _text(line.text)
 
         if line.holds is False:
-            html += " " + _paint(_rgb("#e5484d"), "✗ BROKEN")
+            html += " " + _paint(_rgb("#ef4444"), "✗ BROKEN")
         elif line.holds and not plain:
-            html += " " + _paint(_rgb("#059669"), "✓ holds")
+            html += " " + _paint(_rgb("#10b981"), "✓ holds")
 
         html += "".join(f"<br><i>{_text(extra)}</i>" for extra in line.extras)
         rows.append(html)
@@ -781,7 +782,7 @@ def _mermaid(
     lines.extend(classes)
     lines.extend(
             f"  linkStyle {','.join(map(str, numbers))} stroke:{_LINK_COLORS[relation]},"
-            f"stroke-width:2.5px,stroke-dasharray:8 5,color:{_LINK_COLORS[relation]}"
+            "stroke-width:2.5px,stroke-dasharray:8 5"
             for relation, numbers in painted.items()
             )
 
@@ -863,9 +864,9 @@ def _graphviz(
                 html += " " + _html(line.text)
 
                 if line.holds is False:
-                    html += " " + tint.format("#e5484d", "✗ BROKEN")
+                    html += " " + tint.format("#ef4444", "✗ BROKEN")
                 elif line.holds and not plain:
-                    html += " " + tint.format("#059669", "✓ holds")
+                    html += " " + tint.format("#10b981", "✓ holds")
 
                 html += "".join(f"<BR/><I>{_html(extra)}</I>" for extra in line.extras)
                 rows.append((f"m{index}", small.format(html)))

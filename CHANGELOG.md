@@ -34,8 +34,10 @@
 
 - **Diagrams:** `TopKit.diagram.Diagram(agent)` returns Mermaid flowcharts
   (with front matter setting `wrappingWidth: 360`) of an Agent's Geometry,
-  or of a Tag's Form and Pins, by name. The host is a capsule showing its
-  name, a thin rule and its own fields. Each Tag is one box whose shape
+  or of a Tag's Form and Pins, by name. Charts run top to bottom;
+  `direction="LR"` draws them left to right, wider and shorter. The host
+  is a capsule showing its name, a thin rule and its own fields. Each Tag
+  is one box whose shape
   says what it is — rounded for a Tag, a hexagon for a Pin, a flag for a
   Flag — with a thin rule and one line per declaration. On an Agent the
   name starts with its Overlay place, `①` to `⑳` then `21 · Name`, plus
@@ -49,8 +51,8 @@
   `↳ underlay Kin`, `↳ replaces Kin` or `↳ deletes X` where a Layer covers
   a Tag in another chart. Layering in one chart is an arrow from the
   earlier Tag to the later one, labelled with the relation and the names
-  it shares, and coloured purple (`#7c3aed`) for `underlay`, amber
-  (`#d97706`) for `replaces` or red (`#e5484d`) for `deletes`. Both formats
+  it shares, and coloured purple (`#8b5cf6`) for `underlay`, amber
+  (`#f59e0b`) for `replaces` or red (`#ef4444`) for `deletes`. Both formats
   join boxes with thick dashed arrows; Mermaid crosses out replaces and
   deletes.
   Arrows run from the host to a Tag and from a Base to its Shape, with
