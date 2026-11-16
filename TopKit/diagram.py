@@ -1142,9 +1142,10 @@ def _graphviz_lanes(
             "",
             "  // one row of columns, host first",
             "  { rank=same; " + "; ".join(ids) + "; }",
-            "  " + " -> ".join(ids) + " [style=invis, weight=100];",
-            "",
             ]
+    if len(ids) > 1:
+        lines.append("  " + " -> ".join(ids) + " [style=invis, weight=100];")
+    lines.append("")
 
     for column in columns:
         lines.append(f"  {column.id} [label={_lane_table(column, rows, widths[column.id])}];")
@@ -1186,30 +1187,79 @@ def _swim_node(
     return f"{column.id}_{re.sub(r'[^A-Za-z0-9_]', '_', name).strip('_') or 'row'}"
 
 
+def _swim_pieces(
+        body: str,
+        ) -> list[str]:
+    """The items of a ``+ …`` contribution as readable strings: a list or
+    dict literal parsed exactly, else split on commas outside quotes."""
+
+    for opener, closer in (("[", "]"), ("{", "}")):
+        try:
+            value = ast.literal_eval(opener + body + closer)
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(value, dict):
+            return [f"{k if isinstance(k, str) else _shown(k)}: "
+                    f"{v if isinstance(v, str) else _shown(v)}"
+                    for k, v in value.items()]
+        return [item if isinstance(item, str) else _shown(item) for item in value]
+
+    pieces: list[str] = []
+    buf: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if quote:
+            buf.append(char)
+            if char == quote and body[index - 1] != "\\":
+                quote = ""
+        elif char in "'\"":
+            quote = char
+            buf.append(char)
+        elif body[index:index + 2] == ", ":
+            pieces.append("".join(buf))
+            buf = []
+            index += 2
+            continue
+        else:
+            buf.append(char)
+        index += 1
+    pieces.append("".join(buf))
+
+    out = []
+    for piece in pieces:
+        piece = piece.strip()
+        if len(piece) >= 2 and piece[0] in "'\"" and piece[-1] == piece[0]:
+            piece = piece[1:-1]
+        out.append(piece)
+    return out
+
+
 def _swim_items(
         text: str,
         ) -> tuple[str, list[str]]:
     """Split a Record's list contribution into the node's text and the items
     that hang off it: ``spells + 'a', 'b'`` becomes ``spells`` and
     ``['a', 'b']``. A ``= value`` or ``+n → total`` row is left whole, even
-    when the value itself contains `` + ``."""
+    when the value itself contains `` + ``; a trailing ``(mark)`` stays on
+    the node."""
+
+    marks = ""
+    found = re.search(r" \(([a-z, ]+)\)$", text)
+    if found:
+        marks, text = found.group(0), text[:found.start()]
 
     match = re.match(r"(\S+) \+ (.+)", text)
     if not match:
-        return text, []
+        return text + marks, []
 
-    body = match.group(2)
-    try:
-        pieces = [item if isinstance(item, str) else _shown(item)
-                  for item in ast.literal_eval("[" + body + "]")]
-    except (ValueError, SyntaxError):
-        pieces = [piece.strip().strip("'\"") for piece in body.split(", ")]
-
+    pieces = _swim_pieces(match.group(2))
     items = pieces[:_SWIM_MAX_ITEMS]
     if len(pieces) > _SWIM_MAX_ITEMS:
         items.append("…")
 
-    return match.group(1), items
+    return match.group(1) + marks, items
 
 
 def _mermaid_lanes(

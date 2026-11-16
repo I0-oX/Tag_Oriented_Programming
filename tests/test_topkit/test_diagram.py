@@ -1093,6 +1093,84 @@ class LanesTests(unittest.TestCase):
         items = [label for node, label in nodes.items() if re.fullmatch(r"t\d+_xs_i\d+", node)]
         self.assertEqual(items, ["b, c", "d"])
 
+    def test_a_marked_list_contribution_keeps_its_mark(self) -> None:
+        class Base(Tag):
+            @Record
+            def xs(agent) -> list:
+                return ["a"]
+        class More(Tag):
+            @Constant
+            @Record
+            def xs(agent, stored) -> list:
+                return stored + ["b"]
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Base(ari)
+            More(ari)
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+
+        more = _swim_columns(mmd)[2][0]
+        nodes = _swim_column_nodes(mmd)[more]
+        self.assertIn("(constant)", nodes[f"{more}_xs"])
+        self.assertEqual(nodes[f"{more}_xs_i0"], "b")
+
+    def test_a_dict_contribution_hangs_readable_items(self) -> None:
+        class Base(Tag):
+            @Record
+            def stats(agent) -> dict:
+                return {"hp": 5}
+        class More(Tag):
+            @Record
+            def stats(agent, stored) -> dict:
+                return {**stored, "mp": 3}
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Base(ari)
+            More(ari)
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+
+        more = _swim_columns(mmd)[2][0]
+        nodes = _swim_column_nodes(mmd)[more]
+        self.assertEqual(nodes[f"{more}_stats_i0"], "mp: 3")
+
+    @unittest.skipUnless(shutil.which("dot"), "Graphviz is not installed")
+    def test_a_single_column_graphviz_lanes_chart_still_draws(self) -> None:
+        class Solo(Tag):
+            @Record
+            def x(agent) -> int:
+                return 1
+        (tag_dot,) = Diagram(Solo, format="graphviz", layout="lanes").values()
+        (host_dot,) = Diagram(Hero(), format="graphviz", layout="lanes").values()
+
+        for dot, word in ((tag_dot, "x"), (host_dot, "name")):
+            self.assertNotIn("style=invis", dot)
+            picture = subprocess.run(
+                    ["dot", "-Tsvg"], input=dot, text=True, capture_output=True, check=True,
+                    )
+            self.assertIn(word, picture.stdout)
+
+    def test_a_tag_form_draws_lanes_without_a_host(self) -> None:
+        class Rare(Pin):
+            @Record
+            def rarity(tag) -> str:
+                return "rare"
+        class Hero_Tag(Elf):
+            pass
+        Rare(Hero_Tag)
+        (mmd,) = Diagram(Hero_Tag, layout="lanes").values()
+
+        columns = _swim_columns(mmd)
+        titles = [title for _, title in columns]
+        self.assertNotIn("host", [cid for cid, _ in columns])
+        self.assertIn("Hero_Tag · on Elf", titles)
+        self.assertIn("Rare · Pin", titles)
+        pin = next(cid for cid, title in columns if title == "Rare · Pin")
+        nodes = _swim_column_nodes(mmd)[pin]
+        self.assertIn("Record</span> rarity", nodes[f"{pin}_rarity"])
+        self.assertIn(f"class {pin}_rarity pin", mmd)
+
     def test_live_lanes_mark_only_the_broken_owner(self) -> None:
         ari = Agent()
         ari.strength = 10
@@ -1106,11 +1184,15 @@ class LanesTests(unittest.TestCase):
         (dot,) = Diagram(ari, live=True, format="graphviz", layout="lanes").values()
 
         self.assertNotIn("BROKEN", general)
-        broken = [label for nodes in _swim_column_nodes(mmd).values()
-                  for label in nodes.values() if "BROKEN" in label]
-        self.assertEqual(len(broken), 1)
-        self.assertIn("Post", broken[0])
-        self.assertIn("Strength_Capped", broken[0])
+        columns = _swim_columns(mmd)
+        nodes = _swim_column_nodes(mmd)
+        bruiser = next(cid for cid, title in columns if "Bruiser" in title)
+        capped = next(cid for cid, title in columns if "Capped" in title and "Bruiser" not in title)
+        broken = [node for node, label in nodes[bruiser].items() if "BROKEN" in label]
+        self.assertEqual(broken, [f"{bruiser}_Strength_Capped"])
+        self.assertIn("Post", nodes[bruiser][broken[0]])
+        self.assertFalse(any("BROKEN" in label for label in nodes[capped].values()))
+        self.assertIn(f"class {bruiser}_Strength_Capped broken", mmd)
         self.assertIn("✗ BROKEN", dot)
 
     def test_live_lanes_add_a_ripped_column(self) -> None:
