@@ -102,8 +102,9 @@ PYTHONPATH=. python3 benchmarks/bench.py
 ```
 
 Python 3.12 or later, no dependencies. `TopKit.diagram` saves an Agent's
-Geometry as Mermaid or Graphviz text. Records retain ordinary Python
-bindings; Agents that gain Rip also receive read/write custody checks.
+Geometry as Mermaid or Graphviz text, in boxes or swimlane columns. Records
+retain ordinary Python bindings; Agents that gain Rip also receive read/write
+custody checks.
 TOP Action and Operation handles check saved cleanup at use, including lazy
 continuations. Tagging remains the slower, rarer act; the
 [implementation notes](https://github.com/JulTob/Tag_Oriented_Programming/blob/main/TopKit/IMPLEMENTATION_NOTES.md)

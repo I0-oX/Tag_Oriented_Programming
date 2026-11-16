@@ -46,7 +46,7 @@ import reprlib
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
 
@@ -917,11 +917,434 @@ def _graphviz(
     return "\n".join(lines) + "\n"
 
 
+_LANE_ROW_H = 18
+_LANE_TITLE_H = 24
+_LANE_PAD = "2,1"
+_LANE_GRID = "#94a3b8"
+_LANE_RIPPED = "#8b8b8b"
+_LANE_TEXT = "#0f172a"
+
+
+def _lane_port(
+        name: str,
+        ) -> str:
+    """A declaration's name as a Graphviz port, quoted when it is not one."""
+
+    return name if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) else _quoted(name)
+
+
+def _lane_tint(
+        color: str,
+        ) -> str:
+    """A pale row tint made from a family's own colour, not a new scheme."""
+
+    channels = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(c + (255 - c) * 0.88):02x}" for c in channels)
+
+
+@dataclass(frozen=True, slots=True)
+class _LaneColumn:
+    """One column of a lanes chart: a host, a Tag or a Ripped Tag."""
+
+    id: str
+    title: str
+    cells: dict[str, str]         # global row name → the cell's HTML
+    tints: dict[str, str]         # global row name → its background colour
+    key: str | None = None        # the Tag, when this column has one
+    ripped: bool = False
+    fields: tuple[str, ...] = ()  # host field texts, with values when live
+    lines: tuple[tuple[str, _Line], ...] = ()   # Tag rows, with their declarations
+    words: dict[str, list[str]] = field(default_factory=dict)  # row → ↳ relation words
+
+
+def _lane_rows(
+        graph: _Graph,
+        columns: list[_LaneColumn],
+        fields: list[str],
+        ) -> list[str]:
+    """The chart's global row list, in first-appearance order."""
+
+    rows: list[str] = []
+
+    for field in fields:
+        name = field.split(" = ", 1)[0]
+        if name not in rows:
+            rows.append(name)
+
+    for column in columns:
+        for name in column.cells:
+            if name not in rows:
+                rows.append(name)
+
+    return rows
+
+
+def _lane_columns(
+        graph: _Graph,
+        part: list[type],
+        notes: dict[tuple[type, int], list[str]],
+        ) -> tuple[list[_LaneColumn], list[str]]:
+    """The columns in Overlay order, Ripped Tags last, with their rows.
+    Both formats use this one list, so their columns say the same things."""
+
+    ordered = sorted(
+            (tag for tag in part if tag not in graph.ripped),
+            key=lambda tag: (graph.layers.get(tag, len(part) + 1), tag.__name__),
+            )
+    ripped = sorted(
+            (tag for tag in part if tag in graph.ripped),
+            key=lambda tag: (tag.__name__, tag.__module__),
+            )
+    columns: list[_LaneColumn] = []
+    fields = list(graph.fields)
+    layering_words: dict[tuple[type, str], list[str]] = {}
+    for (prior, tag, relation), names in _layerings(graph, part).items():
+        for row in names:
+            layering_words.setdefault((tag, row), []).append(
+                    f"↳ {relation} {prior.__name__}"
+                    )
+
+    if graph.has_host:
+        cells = {}
+        for field in fields:
+            name = field.split(" = ", 1)[0]
+            color = _LANE_TEXT
+            cells[name] = (
+                    f'<FONT COLOR="{color}" POINT-SIZE="10"><B>{_html(field)}</B></FONT>'
+                    )
+
+        columns.append(_LaneColumn("host", _html(graph.host), cells, {}, fields=tuple(fields)))
+
+    for tag in [*ordered, *ripped]:
+        is_ripped = tag in graph.ripped
+        title = _html(_title(graph, tag))
+
+        if not is_ripped:
+            bases = [
+                    source.__name__
+                    for source, base, label in graph.arrows
+                    if source is not tag and base is tag and label is None and source in graph.tags
+                    ]
+            if bases:
+                title += f' · on {", ".join(bases)}'
+        else:
+            title += " · ripped"
+
+        cells: dict[str, str] = {}
+        member_lines: list[tuple[str, _Line]] = []
+        tints: dict[str, str] = {}
+
+        for index, (member, line) in enumerate(zip(graph.members[tag], _lines(graph, tag, notes))):
+            kind = _html(line.kind)
+            color = _LANE_RIPPED if is_ripped else _COLORS[_FAMILY[line.kind]]
+            text_color = _LANE_RIPPED if is_ripped else _LANE_TEXT
+            html = f'<FONT COLOR="{color}" POINT-SIZE="9"><B>{kind}</B></FONT>'
+            html += f' <FONT COLOR="{text_color}" POINT-SIZE="10">{_html(line.text)}</FONT>'
+
+            if line.holds is False:
+                html += f' <FONT COLOR="#ef4444"><B>✗ BROKEN</B></FONT>'
+            elif line.holds and not is_ripped:
+                html += f' <FONT COLOR="#10b981"><B>✓ holds</B></FONT>'
+            if line.extras:
+                html += (
+                        f' <FONT COLOR="{_LANE_GRID}" POINT-SIZE="8"><I>'
+                        + _html("; ".join(line.extras)) + "</I></FONT>"
+                        )
+            if (tag, member.name) in layering_words:
+                html += (
+                        f' <FONT COLOR="{_LANE_GRID}" POINT-SIZE="8"><I>'
+                        + _html("; ".join(layering_words[tag, member.name]))
+                        + "</I></FONT>"
+                        )
+
+            cells[member.name] = html
+            member_lines.append((member.name, line))
+            tints[member.name] = "#f1f5f9" if is_ripped else _lane_tint(color)
+
+        columns.append(_LaneColumn(
+                f"t{graph.tags.index(tag)}", title, cells, tints,
+                key=tag, ripped=is_ripped, lines=tuple(member_lines),
+                words={row: words for (owner, row), words in layering_words.items()
+                       if owner is tag},
+                ))
+
+    return columns, _lane_rows(graph, columns, fields)
+
+
+def _lane_table(
+        column: _LaneColumn,
+        rows: list[str],
+        width: int,
+        ) -> str:
+    """One HTML-table node per column: a title, a rule, then one fixed-height
+    cell for every global row, blank where the Tag does not declare it."""
+
+    border = _LANE_RIPPED if column.ripped else _LANE_GRID
+    title_bg = "#f8fafc" if column.ripped else "#e2e8f0"
+    title_color = _LANE_RIPPED if column.ripped else _LANE_TEXT
+    body = [
+            f'<TR><TD PORT="title" HEIGHT="{_LANE_TITLE_H}" WIDTH="{width}" '
+            f'ALIGN="CENTER" BGCOLOR="{title_bg}">'
+            f'<B><FONT COLOR="{title_color}" POINT-SIZE="11">{column.title}</FONT></B></TD></TR>',
+            f'<TR><TD HEIGHT="3" WIDTH="{width}" BGCOLOR="{border}" BORDER="0"></TD></TR>',
+            ]
+
+    for name in rows:
+        height = f'HEIGHT="{_LANE_ROW_H}" WIDTH="{width}" ALIGN="LEFT"'
+
+        if name in column.cells:
+            body.append(
+                    f'<TR><TD PORT="{_html(name)}" {height} '
+                    f'BGCOLOR="{column.tints.get(name, "#ffffff")}">{column.cells[name]}</TD></TR>'
+                    )
+        else:
+            body.append(f"<TR><TD {height}>&nbsp;</TD></TR>")
+
+    dashed = ' STYLE="dashed"' if column.ripped else ""
+    return (
+            f'<<TABLE BORDER="1" COLOR="{border}" CELLBORDER="0" CELLSPACING="0" '
+            f'CELLPADDING="{_LANE_PAD}"{dashed}>\n'
+            + "\n".join(body)
+            + "\n</TABLE>>"
+            )
+
+
+def _lane_width(
+        column: _LaneColumn,
+        ) -> int:
+    """A column is as wide as its longest visible line, not the chart's."""
+
+    texts = [column.title, *column.cells.values()]
+    longest = max((len(re.sub(r"<[^>]*>", "", text)) for text in texts), default=0)
+    return min(260, max(86, int(longest * 5.4) + 16))
+
+
+def _graphviz_lanes(
+        graph: _Graph,
+        part: list[type],
+        name: str | None,
+        direction: str,
+        ) -> str:
+    """Graphviz lanes: one table node per column, in a single rank, with
+    straight port-to-port layering arrows."""
+
+    notes = _notes(graph, part, every=False)
+    columns, rows = _lane_columns(graph, part, notes)
+    widths = {column.id: _lane_width(column) for column in columns}
+    ids = [column.id for column in columns]
+    lines = [
+            f"digraph {_quoted(name or graph.host)} {{",
+            f'  graph [rankdir=TB, splines=line, nodesep=0.18, ranksep=0.5, '
+            f'pad="0.3", bgcolor="#ffffff", {_FONT}];',
+            f'  node [shape=plain, {_FONT}];',
+            f'  edge [{_FONT}, fontsize=9, arrowsize=0.9];',
+            "",
+            "  // one row of columns, host first",
+            "  { rank=same; " + "; ".join(ids) + "; }",
+            "  " + " -> ".join(ids) + " [style=invis, weight=100];",
+            "",
+            ]
+
+    for column in columns:
+        lines.append(f"  {column.id} [label={_lane_table(column, rows, widths[column.id])}];")
+
+    lines.append("")
+    lines.append("  // layering: earlier member to later member, same row")
+
+    for (prior, tag, relation), names in _layerings(graph, part).items():
+        port = _lane_port(names[0])
+        color = _LINK_COLORS[relation]
+        head = "normal" if relation == "underlay" else "tee"
+        lines.append(
+                f"  t{graph.tags.index(prior)}:{port}:e -> t{graph.tags.index(tag)}:{port}:w "
+                f"[constraint=false, style=dashed, penwidth=2.2, arrowsize=1, "
+                f'color="{color}", arrowhead={head}];'
+                )
+
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+# Mermaid lanes are the wiki's swimlanes: a column per Tag, with the nodes
+# of a declaration in the column. The lists and arrows are the same as the
+# boxes chart's; only the frame changes.
+_SWIM_SHAPES = {
+        "check": ("{{", "}}"),
+        "data": ("[", "]"),
+        "act": ("(", ")"),
+        }
+_SWIM_MAX_ITEMS = 4
+
+
+def _swim_node(
+        column: _LaneColumn,
+        name: str,
+        ) -> str:
+    """A node's id in one swimlane column."""
+
+    return f"{column.id}_{re.sub(r'[^A-Za-z0-9_]', '_', name).strip('_') or 'row'}"
+
+
+def _swim_items(
+        text: str,
+        ) -> tuple[str, list[str]]:
+    """Split a Record's contribution into the node's text and the list items
+    that hang off it: ``+ 'a', 'b'`` becomes ``()`` and ``['a', 'b']``."""
+
+    match = re.search(r" \+ (.+)$", text)
+    if not match:
+        return text, []
+
+    pieces = [piece.strip().strip("'\"") for piece in match.group(1).split(", ")]
+    items = pieces[:_SWIM_MAX_ITEMS]
+
+    if len(pieces) > _SWIM_MAX_ITEMS:
+        items.append("…")
+
+    return text[:match.start()], items
+
+
+def _mermaid_lanes(
+        graph: _Graph,
+        part: list[type],
+        name: str | None,
+        direction: str,
+        ) -> str:
+    """Mermaid lanes: `swimlane-beta TD`, one subgraph per column, with only
+    real declaration nodes and unlabelled layering links; the relation words
+    sit in the later node's text."""
+
+    columns, rows = _lane_columns(graph, part, _notes(graph, part, every=False))
+    lines = [
+            "---",
+            "config:",
+            "  flowchart:",
+            "    wrappingWidth: 360",
+            "---",
+            "swimlane-beta TD",
+            ]
+    classes: list[str] = []
+    count = 0                       # Mermaid numbers every edge, even plain ones
+    painted: dict[str, list[int]] = {}
+
+    for column in columns:
+        lines.append(f'  subgraph {column.id}["{column.title}"]')
+        nodes: list[str] = []
+        hanging: list[tuple[str, list[str]]] = []
+        broken: list[str] = []
+        fields = {field.split(" = ", 1)[0]: field for field in column.fields}
+        declared = dict(column.lines)
+
+        for row in rows:                 # source order is the global row order
+            if row in fields:
+                node = _swim_node(column, row)
+                lines.append(f'    {node}["{_text(fields[row].replace(" = ", ": ", 1))}"]')
+                nodes.append(node)
+                continue
+
+            line = declared.get(row)
+
+            if line is None:
+                continue
+
+            family = _FAMILY[line.kind]
+            color = _rgb(_COLORS[family])
+            text = line.text
+
+            if line.kind == "Record" and not column.ripped:
+                text, items = _swim_items(text)
+            else:
+                items = []
+
+            word = _text(line.kind) if column.ripped else _paint(color, _text(line.kind))
+            label = f"{word} {_text(text)}"
+
+            if line.holds is False:
+                label += " " + _paint(_rgb("#ef4444"), "✗ BROKEN")
+            elif line.holds and not column.ripped:
+                label += " " + _paint(_rgb("#10b981"), "✓ holds")
+            if line.extras:
+                label += "".join(f"<br/><i>{_text(extra)}</i>" for extra in line.extras)
+            for word in column.words.get(row, ()):
+                label += (
+                        "<br/><span style='color:#94a3b8'><i>"
+                        + _text(word) + "</i></span>"
+                        )
+            node = _swim_node(column, row)
+
+            opening, closing = _SWIM_SHAPES[family]
+            lines.append(f"    {node}{opening}\"{label}\"{closing}")
+            nodes.append(node)
+
+            if line.holds is False:
+                broken.append(node)
+            if items:
+                hanging.append((node, items))
+
+        # Items hang below the column's rows, so they do not stagger them.
+        for parent, items in hanging:
+            for index, item in enumerate(items):
+                extra = f"{parent}_i{index}"
+                lines.append(f'    {extra}["{_text(item)}"]')
+                lines.append(f"    {parent} ---|+| {extra}")
+                count += 1
+
+        look = "ripped" if column.ripped else (
+                _look(graph, column.key) if column.key is not None else None
+                )
+        if look == "broken":          # only the Post that fails owns the verdict
+            look = None
+        classes.extend(f"  class {node} {look}" for node in nodes if look)
+        classes.extend(f"  class {node} broken" for node in broken)
+        lines.append("  end")
+
+    for (prior, tag, relation), names in _layerings(graph, part).items():
+        source = _swim_node(next(c for c in columns if c.key is prior), names[0])
+        target = _swim_node(next(c for c in columns if c.key is tag), names[0])
+        head = "-.->" if relation == "underlay" else "-.-x"
+        lines.append(f"  {source} {head} {target}")
+        painted.setdefault(relation, []).append(count)
+        count += 1
+
+    used = {line.rsplit(" ", 1)[1] for line in classes}
+    lines.extend(
+            f"  classDef {look} {style}"
+            for look, style in _MERMAID_STYLES.items()
+            if look in used and look != "module"
+            )
+    lines.extend(classes)
+    lines.extend(
+            f"  linkStyle {','.join(map(str, numbers))} stroke:{_LINK_COLORS[relation]},"
+            "stroke-width:2.5px,stroke-dasharray:8 5"
+            for relation, numbers in painted.items()
+            )
+
+    return "\n".join(lines) + "\n"
+
+
 _FORMATS = {
         "mermaid": (_mermaid, ".mmd"),
         "graphviz": (_graphviz, ".dot"),
         }
+_LANES = {
+        "mermaid": (_mermaid_lanes, ".mmd"),
+        "graphviz": (_graphviz_lanes, ".dot"),
+        }
+_LAYOUTS = ("boxes", "lanes")
 _IMAGES = ("svg", "png")
+
+
+def _check_layout(
+        layout: str,
+        direction: str,
+        ) -> None:
+    """Lanes are columns; only boxes may head another way."""
+
+    if layout not in _LAYOUTS:
+        raise ValueError(f"layout is one of {', '.join(_LAYOUTS)}")
+
+    if layout == "lanes" and direction != "TD":
+        raise ValueError("lanes are always columns; direction only applies to layout='boxes'")
 
 
 def Diagram(
@@ -931,6 +1354,7 @@ def Diagram(
         limit: int = LIMIT,
         direction: str = "TD",
         format: str = "mermaid",
+        layout: str = "boxes",
         ) -> dict[str, str]:
     """Charts of an Agent's Geometry or a Tag's Form, by name: Mermaid
     flowcharts, or Graphviz DOT with ``format="graphviz"``.
@@ -955,7 +1379,8 @@ def Diagram(
     if format not in _FORMATS:
         raise ValueError(f"format is one of {', '.join(_FORMATS)}")
 
-    draw = _FORMATS[format][0]
+    _check_layout(layout, direction)
+    draw = (_LANES if layout == "lanes" else _FORMATS)[format][0]
     graph = _Graph(subject, live)
     parts, names = graph.parts(limit)
     divided = len(parts) > 1
@@ -1005,6 +1430,7 @@ def Save(
         direction: str = "TD",
         format: str = "mermaid",
         image: str | None = None,
+        layout: str = "boxes",
         ) -> tuple[Path, ...]:
     """Write ``Diagram(subject)`` as text files: Mermaid ``.mmd``, or
     Graphviz ``.dot`` with ``format="graphviz"``. ``live=True`` draws one
@@ -1019,6 +1445,8 @@ def Save(
 
     if format not in _FORMATS:
         raise ValueError(f"format is one of {', '.join(_FORMATS)}")
+
+    _check_layout(layout, direction)
 
     if image is not None and image not in _IMAGES:
         raise ValueError(f"image is one of {', '.join(_IMAGES)}, or None")
@@ -1036,6 +1464,7 @@ def Save(
             limit=limit,
             direction=direction,
             format=format,
+            layout=layout,
             )
     suffix = _FORMATS[format][1]
     path = Path(path)

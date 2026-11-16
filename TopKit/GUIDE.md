@@ -1320,6 +1320,7 @@ Save(SomeTag, "tag")                                  # a Tag's Form and its Pin
 Save(agent, "agent", live=True)                       # this object's values, Post verdicts, Ripped Tags
 Save(agent, "agent", format="graphviz", image="png")  # .dot plus a picture; needs Graphviz installed
 Save(agent, "agent", direction="LR")                  # wide, left to right
+Save(agent, "agent", layout="lanes")                  # swimlanes: one column per Tag
 ```
 
 To read a chart:
@@ -1337,6 +1338,20 @@ To read a chart:
 - With `live=True` you also see this object's values, `✓ holds` or
   `✗ BROKEN` on each Post (a red border marks a broken Tag), and Ripped
   Tags drawn dashed with a `ripped` arrow.
+
+`layout="lanes"` draws the same chart as columns instead of boxes. The host
+is the first column, then one column per Tag in Overlay order. Mermaid writes
+`swimlane-beta TD`; each declaration is a node — a hexagon for a check (Pre,
+Post, Imprint, Constant), a square for state (Record, Report) and a rounded
+node for behaviour (Action, Operation, Rip, Delete) — and layering arrows run
+between same-named members from one column to the next, in the same colours
+as boxes. Graphviz draws one table per column, with those members in shared
+rows. With `live=True` you also get host `name: value` nodes, every list item
+hanging from its Record, `✓ holds` / `✗ BROKEN` on the node that owns the
+verdict, and a dashed column for Ripped Tags at the end. Lanes are always
+columns side by side, so `direction` applies only to boxes: `LR` with lanes
+raises. As with boxes, `image=` works only with `format="graphviz"`; a Mermaid
+chart is drawn by its viewer.
 
 A Geometry with more than 40 Tags is split by code, one chart per module;
 `Diagram` hands back `{name: text}` and `Save` writes one
@@ -1381,6 +1396,16 @@ assert 'replaces Mana' in chart             # Mage's Record covers Being's
 
 live = Diagram(sol, live=True)["Character"] # one object's state
 assert '✗ BROKEN' in live                   # the Post now fails
+
+lanes = Diagram(sol, layout="lanes")["Character"]
+assert 'swimlane-beta TD' in lanes          # columns, not boxes
+```
+
+Saving lanes is the same call, with the layout named:
+
+```py
+Save(sol, "sol", layout="lanes")                   # writes sol.mmd
+Save(sol, "sol", layout="lanes", format="graphviz", image="png")  # tables plus a picture
 ```
 
 ---

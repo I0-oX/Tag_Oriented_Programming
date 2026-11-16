@@ -34,7 +34,7 @@ tracks splitting them by idea without changing semantics.
 | `access.py` | the hooks on the runtime type, Agent-bound views |
 | `tags.py` | `Tag` and its metaclass |
 | `queries.py` | `Apply`, `Form`, `Keyword`, `Tags`, `Outline` |
-| `diagram.py` | `Diagram`, `Save`: an Agent's Geometry or a Tag's Form as Mermaid `.mmd` or Graphviz `.dot`, one box per Tag with its declarations, layer numbers and layering arrows; general view by default, `live=True` adds one object's state; SVG/PNG of Graphviz charts via `dot` |
+| `diagram.py` | `Diagram`, `Save`: an Agent's Geometry or a Tag's Form as Mermaid `.mmd` or Graphviz `.dot`, laid out as boxes (default) or swimlane columns (`layout="lanes"`); one box per Tag, or one column per Tag with the host first, holding its declarations, layer numbers and layering arrows between same-named members; general view by default, `live=True` adds one object's state; SVG/PNG of Graphviz charts via `dot` |
 | `memo.py` | owner-local Tag memos and snapshots of changing Tag namespaces |
 
 ## The access design

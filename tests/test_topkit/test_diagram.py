@@ -812,5 +812,310 @@ class DiagramTests(unittest.TestCase):
             self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
 
 
+
+def _swim_columns(text: str) -> list[tuple[str, str]]:
+    """A lanes chart's column ids and titles, in source order."""
+
+    return re.findall(r'^  subgraph (\w+)\["(.*?)"\]$', text, re.MULTILINE)
+
+
+def _swim_column_nodes(text: str) -> dict[str, dict[str, str]]:
+    """Visible Mermaid nodes grouped by the column that declares them."""
+
+    nodes = r'^\s+(\w+)(?:\[\\?"|\("|\{\{")(.*?)(?:"\\?\]|"\)|"\}\})$'
+    return {
+            column: dict(re.findall(nodes, body, re.MULTILINE))
+            for column, body in re.findall(
+                    r'^  subgraph (\w+)\[".*?"\]\n(.*?)^  end$',
+                    text, re.MULTILINE | re.DOTALL,
+                    )
+            }
+
+
+def _swim_links(text: str) -> list[tuple[str, str, str]]:
+    """Mermaid layering links: (source, arrow, target), never with a label."""
+
+    return re.findall(r'^  (\w+) (-\.->|-\.-x) (\w+)$', text, re.MULTILINE)
+
+
+def _lane_tables(dot: str) -> dict[str, list[str | None]]:
+    """A DOT node → its HTML-table rows, with the title and rule removed."""
+
+    tables: dict[str, list[str | None]] = {}
+    node: str | None = None
+
+    for line in dot.splitlines():
+        found = re.match(r"^  (\w+) \[label=<<TABLE", line)
+
+        if found:
+            node = found.group(1)
+            tables[node] = []
+        elif node and line.startswith("<TR>"):
+            port = re.search(r'PORT="([^"]+)"', line)
+            tables[node].append(port.group(1) if port else None)
+        elif node and line.startswith("</TABLE>>"):
+            node = None
+
+    return {key: rows[2:] for key, rows in tables.items()}
+
+
+def _lane_cell(dot: str, node: str, port: str) -> str:
+    """The table row that owns a port, including its relation words."""
+
+    table = re.search(rf'^  {node} \[label=<<TABLE.*?</TABLE>>\];$', dot, re.MULTILINE | re.DOTALL)
+    assert table is not None
+    return next(line for line in table.group(0).splitlines() if f'PORT="{port}"' in line)
+
+
+
+def _lane_ids(dot: str) -> list[str]:
+    """Graphviz column ids, in the order they share a rank."""
+
+    return re.search(r"\{ rank=same; (.*?); \}", dot).group(1).split("; ")
+
+
+class LanesTests(unittest.TestCase):
+    def test_both_formats_produce_lanes(self) -> None:
+        ari = _mage()
+        (mmd,) = Diagram(ari, layout="lanes").values()
+        (dot,) = Diagram(ari, format="graphviz", layout="lanes").values()
+
+        self.assertEqual(
+                [title for _, title in _swim_columns(mmd)],
+                ["Hero", "① Kin", "② Mage"],
+                )
+        self.assertEqual(list(_lane_tables(dot)), _lane_ids(dot))
+        self.assertEqual(
+                re.findall(r'PORT="title".*?POINT-SIZE="11">(.*?)</FONT>', dot),
+                ["Hero", "① Kin", "② Mage"],
+                )
+        nodes = _swim_column_nodes(mmd)
+        self.assertIn("↳ underlay Kin", nodes["t1"]["t1_spells"])
+        self.assertIn("↳ underlay Kin", _lane_cell(dot, "t1", "spells"))
+
+    def test_mermaid_lanes_start_after_the_front_matter(self) -> None:
+        (mmd,) = Diagram(_mage(), layout="lanes").values()
+        lines = mmd.splitlines()
+
+        self.assertEqual(lines[0], "---")
+        close = lines.index("---", 1)
+        self.assertEqual(lines[close + 1], "swimlane-beta TD")
+        self.assertNotIn("\nflowchart ", mmd)
+        self.assertNotIn("title:", mmd)
+
+    def test_mermaid_lanes_have_one_subgraph_per_column_host_first(self) -> None:
+        (mmd,) = Diagram(_mage(), layout="lanes").values()
+        columns = _swim_columns(mmd)
+
+        self.assertEqual(columns[0][0], "host")
+        self.assertEqual([title for _, title in columns],
+                         ["Hero", "① Kin", "② Mage"])
+        self.assertEqual(set(_swim_column_nodes(mmd)), {key for key, _ in columns})
+
+    def test_mermaid_lanes_name_kinds_and_use_the_wiki_shapes(self) -> None:
+        (mmd,) = Diagram(_mage(), layout="lanes").values()
+        color = r"<span style='color:rgb\(\d+,\d+,\d+\)'>"
+
+        self.assertRegex(mmd, r'\["' + color + r'Record</span> spells"\]')
+        self.assertRegex(mmd, r'\{\{"' + color + r'Post</span> Has_Spells"\}\}')
+        self.assertRegex(mmd, r'\("' + color + r'Action</span> Greet"\)')
+
+    def test_layering_links_name_the_earlier_member_first(self) -> None:
+        ari = _mage()
+        (mmd,) = Diagram(ari, layout="lanes").values()
+        (dot,) = Diagram(ari, format="graphviz", layout="lanes").values()
+        by_column = _swim_column_nodes(mmd)
+        columns = [key for key, _ in _swim_columns(mmd)]
+        nodes = {node: label for group in by_column.values()
+                 for node, label in group.items()}
+
+        links = _swim_links(mmd)
+        self.assertEqual(len(links), 2)
+        for source, arrow, target in links:
+            self.assertIn(source, by_column[columns[1]])
+            self.assertIn(target, by_column[columns[2]])
+            self.assertTrue(arrow.startswith("-."))
+        self.assertRegex(nodes[links[0][0]], r">Record</span> spells$")
+        self.assertRegex(nodes[links[0][2]], r"↳ underlay Kin")
+        self.assertIn("↳ replaces Kin", nodes[links[1][2]])
+        self.assertNotIn("|underlay", mmd)
+        self.assertNotIn("|replaces", mmd)
+
+        styles = dict(re.findall(r'^  linkStyle (\d+) stroke:(#[0-9a-f]{6}),', mmd, re.MULTILINE))
+        self.assertEqual(styles["0"], "#8b5cf6")
+        self.assertEqual(styles["1"], "#f59e0b")
+
+        ids = _lane_ids(dot)
+        underlay = next(line for line in dot.splitlines()
+                        if f"{ids[1]}:spells:e -> {ids[2]}:spells:w" in line)
+        replaces = next(line for line in dot.splitlines()
+                        if f"{ids[1]}:Greet:e -> {ids[2]}:Greet:w" in line)
+        self.assertIn('color="#8b5cf6"', underlay)
+        self.assertIn("arrowhead=normal", underlay)
+        self.assertIn('color="#f59e0b"', replaces)
+        self.assertIn("arrowhead=tee", replaces)
+        self.assertNotIn("label=", underlay)
+        self.assertNotIn("label=", replaces)
+        self.assertIn("↳ underlay Kin", _lane_cell(dot, ids[2], "spells"))
+        self.assertIn("↳ replaces Kin", _lane_cell(dot, ids[2], "Greet"))
+
+    def test_default_format_stays_mermaid(self) -> None:
+        ari = _mage()
+        self.assertEqual(
+                Diagram(ari, layout="lanes"),
+                Diagram(ari, layout="lanes", format="mermaid"),
+                )
+
+    def test_lanes_reject_horizontal_direction(self) -> None:
+        with self.assertRaisesRegex(ValueError, "direction only applies to layout='boxes'"):
+            Diagram(_mage(), layout="lanes", direction="LR")
+
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError):
+                Save(_mage(), pathlib.Path(folder) / "ari", layout="lanes", direction="LR")
+
+            self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
+
+    def test_an_unknown_layout_names_both_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "boxes.*lanes"):
+            Diagram(_mage(), layout="cards")
+
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError):
+                Save(_mage(), pathlib.Path(folder) / "ari", layout="cards")
+
+            self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
+
+    def test_a_mermaid_chart_with_lanes_has_no_image(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(ValueError, "format='graphviz'"):
+                Save(_mage(), pathlib.Path(folder) / "ari", image="png", layout="lanes")
+
+            self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
+
+    def test_same_named_members_share_a_graphviz_row(self) -> None:
+        (dot,) = Diagram(_mage(), format="graphviz", layout="lanes").values()
+        tables = _lane_tables(dot)
+        ids = _lane_ids(dot)
+        self.assertIn("splines=line", dot)
+
+        self.assertEqual(list(tables), ids)
+        self.assertEqual(len({len(rows) for rows in tables.values()}), 1)
+        sharing = [rows for rows in tables.values() if "spells" in rows]
+        self.assertEqual(len(sharing), 2)
+        self.assertEqual(len({rows.index("spells") for rows in sharing}), 1)
+        self.assertIn(f"{ids[1]}:spells:e -> {ids[2]}:spells:w", dot)
+
+    @unittest.skipUnless(shutil.which("dot"), "Graphviz is not installed")
+    def test_a_host_field_name_that_is_no_identifier_still_draws(self) -> None:
+        ari = Hero()
+        setattr(ari, "first name", "Ari")
+        setattr(ari, 'q"x <&> \\', 1)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Kin(ari)
+        (dot,) = Diagram(ari, live=True, format="graphviz", layout="lanes").values()
+
+        picture = subprocess.run(
+                ["dot", "-Tsvg"], input=dot, text=True, capture_output=True, check=True,
+                )
+
+        self.assertIn("<svg", picture.stdout)
+        self.assertIn("first name", picture.stdout)
+
+    def test_live_lanes_add_host_values_and_list_items(self) -> None:
+        ari = _mage()
+        (general,) = Diagram(ari, layout="lanes").values()
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+        (dot,) = Diagram(ari, live=True, format="graphviz", layout="lanes").values()
+
+        self.assertNotIn("'Ari'", general)
+        self.assertIn("name: 'Ari'", [label for nodes in _swim_column_nodes(mmd).values()
+                                      for label in nodes.values()])
+        self.assertIn("name = 'Ari'", dot)
+
+        items = re.findall(r'^\s+\w+ ---\|\+\| (\w+)$', mmd, re.MULTILINE)
+        self.assertTrue(items)
+        labels = [label for nodes in _swim_column_nodes(mmd).values()
+                  for node, label in nodes.items() if node in items]
+        self.assertTrue(any("Bolt" in label for label in labels))
+        self.assertIn("✓ holds", mmd)
+
+    def test_live_lanes_mark_only_the_broken_owner(self) -> None:
+        ari = Agent()
+        ari.strength = 10
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Bruiser(ari)
+        ari.strength = 30
+
+        (general,) = Diagram(ari, layout="lanes").values()
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+        (dot,) = Diagram(ari, live=True, format="graphviz", layout="lanes").values()
+
+        self.assertNotIn("BROKEN", general)
+        broken = [label for nodes in _swim_column_nodes(mmd).values()
+                  for label in nodes.values() if "BROKEN" in label]
+        self.assertEqual(len(broken), 1)
+        self.assertIn("Post", broken[0])
+        self.assertIn("Strength_Capped", broken[0])
+        self.assertIn("✗ BROKEN", dot)
+
+    def test_live_lanes_add_a_ripped_column(self) -> None:
+        ari = Agent()
+        Elf(ari)
+        del Elf[ari]
+        (general,) = Diagram(ari, layout="lanes").values()
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+        (dot,) = Diagram(ari, live=True, format="graphviz", layout="lanes").values()
+
+        self.assertNotIn("ripped", general)
+        columns = _swim_columns(mmd)
+        self.assertEqual(len(columns), 3)
+        self.assertIn("Elf", columns[-1][1])
+        self.assertIn("ripped", columns[-1][1])
+        self.assertRegex(dot, r'<TABLE[^>]*STYLE="dashed"')
+        self.assertNotIn('label=" ripped "', dot)
+
+    def test_save_writes_lanes_and_boxes_stay_unchanged(self) -> None:
+        ari = _mage()
+        self.assertEqual(Diagram(ari), Diagram(ari, layout="boxes"))
+        self.assertEqual(
+                Diagram(ari, format="graphviz"),
+                Diagram(ari, format="graphviz", layout="boxes"),
+                )
+        self.assertIn("flowchart TD", next(iter(Diagram(ari).values())))
+        self.assertNotIn("swimlane-beta", next(iter(Diagram(ari).values())))
+
+        with tempfile.TemporaryDirectory() as folder:
+            (path,) = Save(ari, pathlib.Path(folder) / "ari", layout="lanes")
+            name = path.name
+            written = path.read_text()
+            (dot_path,) = Save(
+                    ari, pathlib.Path(folder) / "ari", format="graphviz", layout="lanes",
+                    )
+            dot_written = dot_path.read_text()
+
+        self.assertEqual(name, "ari.mmd")
+        self.assertEqual(written, next(iter(Diagram(ari, layout="lanes").values())))
+        self.assertEqual(dot_path.name, "ari.dot")
+        self.assertEqual(
+                dot_written,
+                next(iter(Diagram(ari, format="graphviz", layout="lanes").values())),
+                )
+
+    def test_lanes_are_deterministic(self) -> None:
+        ari = _mage()
+
+        for options in (
+                {"layout": "lanes"},
+                {"layout": "lanes", "live": True},
+                {"layout": "lanes", "format": "graphviz"},
+                ):
+            with self.subTest(options=options):
+                first = Diagram(ari, **options)
+                self.assertEqual(first, Diagram(ari, **options))
+
+
 if __name__ == "__main__":
     unittest.main()
