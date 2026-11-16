@@ -1333,7 +1333,7 @@ To read a chart:
   (Action, Operation, Rip, Delete).
 - One dashed arrow to the next Tag says how the later covers the earlier:
   purple is `underlay`, amber is `replaces`, red is `deletes`.
-- Tags from several modules sit inside a dotted box named for each module.
+- Tags from several modules sit inside a dashed box named for each module.
 - With `live=True` you also see this object's values, `✓ holds` or
   `✗ BROKEN` on each Post (a red border marks a broken Tag), and Ripped
   Tags drawn dashed with a `ripped` arrow.
