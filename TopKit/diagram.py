@@ -82,6 +82,8 @@ _HTML_ESCAPES = {
         '"': "&quot;",
         "\n": " ",
         }
+# XML rejects these C0 controls in labels; space them out (tab/LF/CR are legal).
+_CONTROL = {chr(c): " " for c in range(32) if c not in (9, 10, 13)}
 # Mermaid: strokes and text only, no fills. A .mmd is drawn in the viewer's
 # theme, and a fill fixed for a light page leaves a dark theme's text
 # unreadable, and the reverse.
@@ -149,7 +151,7 @@ _DOT_LOOKS = {
 def _text(
         text: str,
         ) -> str:
-    return "".join(_ESCAPES.get(c, c) for c in text)
+    return "".join(_ESCAPES.get(c, _CONTROL.get(c, c)) for c in text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -808,7 +810,7 @@ def _mermaid(
 def _html(
         text: str,
         ) -> str:
-    return "".join(_HTML_ESCAPES.get(c, c) for c in text)
+    return "".join(_HTML_ESCAPES.get(c, _CONTROL.get(c, c)) for c in text)
 
 
 def _quoted(
@@ -1016,7 +1018,7 @@ def _lane_columns(
             name = field.split(" = ", 1)[0]
             color = _LANE_TEXT
             cells[name] = (
-                    f'<FONT COLOR="{color}" POINT-SIZE="10"><B>{_html(field)}</B></FONT>'
+                    f'<FONT COLOR="{color}" POINT-SIZE="10"><B>{_html(field) or "&nbsp;"}</B></FONT>'
                     )
 
         columns.append(_LaneColumn("host", graph.host, cells, {}, fields=tuple(fields)))
@@ -1091,7 +1093,7 @@ def _lane_table(
     body = [
             f'<TR><TD PORT="title" HEIGHT="{_LANE_TITLE_H}" WIDTH="{width}" '
             f'ALIGN="CENTER" BGCOLOR="{title_bg}">'
-            f'<B><FONT COLOR="{title_color}" POINT-SIZE="11">{_html(column.title)}</FONT></B></TD></TR>',
+            f'<B><FONT COLOR="{title_color}" POINT-SIZE="11">{_html(column.title) or "&nbsp;"}</FONT></B></TD></TR>',
             f'<TR><TD HEIGHT="3" WIDTH="{width}" BGCOLOR="{border}" BORDER="0"></TD></TR>',
             ]
 
@@ -1294,7 +1296,7 @@ def _mermaid_lanes(
     painted: dict[str, list[int]] = {}
 
     for column in columns:
-        lines.append(f'  subgraph {column.id}["{_text(column.title)}"]')
+        lines.append(f'  subgraph {column.id}["{_text(column.title) or " "}"]')
         nodes: list[str] = []
         hanging: list[tuple[str, list[str]]] = []
         broken: list[str] = []
@@ -1304,7 +1306,7 @@ def _mermaid_lanes(
         for row in rows:                 # source order is the global row order
             if row in fields:
                 node = _swim_node(column, row)
-                lines.append(f'    {node}["{_text(fields[row].replace(" = ", ": ", 1))}"]')
+                lines.append(f'    {node}["{_text(fields[row].replace(" = ", ": ", 1)) or " "}"]')
                 nodes.append(node)
                 continue
 
@@ -1346,6 +1348,12 @@ def _mermaid_lanes(
                 broken.append(node)
             if items:
                 hanging.append((node, items))
+
+        if not nodes:               # a Tag with no declarations still gets a column
+            node = f"{column.id}_empty"
+            pad = "#nbsp;" * max(len(column.title), 6)
+            lines.append(f'    {node}["{pad}"]')
+            nodes.append(node)
 
         # Items hang below the column's rows, so they do not stagger them.
         for parent, items in hanging:

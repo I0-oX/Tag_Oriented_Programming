@@ -489,6 +489,9 @@ class DiagramTests(unittest.TestCase):
                 {"game.species": ["Species"], "game.feats": ["Elf"], "game.backgrounds": ["Sage"]},
                 )
         self.assertEqual(dot.count("subgraph cluster_"), 3)
+        self.assertIn("classDef module fill:none,stroke:#94a3b8,stroke-dasharray:4 4", text)
+        self.assertIn("class m0 module", text)
+        self.assertIn('style="rounded,dashed", color="#94a3b8"', dot)
 
     def test_a_chart_of_one_module_has_no_box(self) -> None:
         ari = Agent()
@@ -664,6 +667,18 @@ class DiagramTests(unittest.TestCase):
         self.assertIn(f"  class {boxes['Inspired · Flag']} flag", text)
         self.assertIn(">① Inspired · Flag</TD>", dot)
         self.assertIn('shape=cds, color="#0d9488"', dot)
+
+    def test_boxes_color_the_kind_word_by_family(self) -> None:
+        ari = _mage()
+        (text,) = Diagram(ari).values()
+        (dot,) = Diagram(ari, format="graphviz").values()
+
+        self.assertIn("color:rgb(16,185,129)'>Record", text)
+        self.assertIn("color:rgb(59,130,246)'>Post", text)
+        self.assertIn("color:rgb(139,92,246)'>Action", text)
+        self.assertIn('<FONT COLOR="#10b981"', dot)
+        self.assertIn('<FONT COLOR="#3b82f6"', dot)
+        self.assertIn('<FONT COLOR="#8b5cf6"', dot)
 
     def test_a_tag_and_its_pins_are_one_family_never_divided(self) -> None:
         class Rare(Pin):
@@ -1267,6 +1282,38 @@ class LanesTests(unittest.TestCase):
         (titles,) = Diagram(other, layout="lanes").values()
         self.assertIn('subgraph t0["① A#35;35;B"]', titles)
 
+    def test_an_empty_tag_still_gets_a_lane_column(self) -> None:
+        @Flag
+        class Inspired(Tag):
+            pass
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Inspired(ari)
+        (mmd,) = Diagram(ari, layout="lanes").values()
+
+        flag = next(cid for cid, title in _swim_columns(mmd) if "Inspired" in title)
+        self.assertTrue(_swim_column_nodes(mmd)[flag])    # a placeholder, not an empty subgraph
+        self.assertIn(f"class {flag}_empty flag", mmd)
+
+    @unittest.skipUnless(shutil.which("dot"), "Graphviz is not installed")
+    def test_empty_and_control_names_still_draw(self) -> None:
+        class H:
+            pass
+        empty_field = H()
+        setattr(empty_field, "", 42)
+        control = H()
+        setattr(control, "\x1b", 1)
+        setattr(control, "\x00", 2)
+        for subject in (empty_field, type("", (), {})(), type("", (Tag,), {}), control):
+            (dot,) = Diagram(subject, layout="lanes", format="graphviz").values()
+            done = subprocess.run(
+                    ["dot", "-Tsvg"], input=dot, text=True, capture_output=True, check=True,
+                    )
+            self.assertIn("<svg", done.stdout)
+            (mmd,) = Diagram(subject, layout="lanes").values()
+            self.assertNotIn('[""]', mmd)                 # no empty Mermaid label
+
     def test_live_lanes_mark_only_the_broken_owner(self) -> None:
         ari = Agent()
         ari.strength = 10
@@ -1334,10 +1381,13 @@ class LanesTests(unittest.TestCase):
                 next(iter(Diagram(ari, format="graphviz", layout="lanes").values())),
                 )
 
-    def test_lanes_are_deterministic(self) -> None:
+    def test_charts_are_deterministic(self) -> None:
         ari = _mage()
 
         for options in (
+                {},
+                {"live": True},
+                {"format": "graphviz"},
                 {"layout": "lanes"},
                 {"layout": "lanes", "live": True},
                 {"layout": "lanes", "format": "graphviz"},
