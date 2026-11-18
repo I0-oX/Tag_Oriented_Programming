@@ -11,13 +11,16 @@ import unittest
 import warnings
 from unittest import mock
 
+from TopKit import Action
 from TopKit import Constant
 from TopKit import Delete
 from TopKit import Flag
 from TopKit import Pin
 from TopKit import Post
+from TopKit import Pre
 from TopKit import Record
 from TopKit import Tag
+from TopKit import Underlay
 from TopKit.diagram import Diagram
 from TopKit.diagram import Save
 
@@ -1334,6 +1337,87 @@ class LanesTests(unittest.TestCase):
             self.assertEqual(len(ports), len(set(ports)), node)
         self.assertIn('PORT="p613a62_"', dot)       # the literal name, disambiguated
         self.assertIn('PORT="p613a62"', dot)
+
+    def test_each_shared_member_gets_its_own_layering_arrow(self) -> None:
+        class Base(Tag):
+            __module__ = "game.w"
+
+            @Record
+            def hp(agent) -> int:
+                return 1
+
+            @Action
+            def Describe(agent) -> str:
+                return "b"
+
+            @Action
+            @Underlay
+            def Describe(agent, underlay) -> str:
+                return underlay()
+
+        class Winged(Tag):
+            __module__ = "game.w"
+
+            @Record
+            def hp(agent, stored) -> int:
+                return stored + 1
+
+            @Action
+            def Describe(agent) -> str:
+                return "c"
+
+            @Action
+            @Underlay
+            def Describe(agent, underlay) -> str:
+                return underlay()
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Base(ari)
+            Winged(ari)
+        (mmd,) = Diagram(ari, layout="lanes").values()
+        (dot,) = Diagram(ari, format="graphviz", layout="lanes").values()
+
+        self.assertIn("t0_hp -.-> t1_hp", mmd)
+        self.assertIn("t0_Describe -.-> t1_Describe", mmd)   # the second shared member
+        self.assertIn("t0:hp:e -> t1:hp:w", dot)
+        self.assertIn("t0:Describe:e -> t1:Describe:w", dot)
+
+    def test_pre_and_post_of_one_name_draw_both_rows(self) -> None:
+        class Crew_Member(Tag):
+            __module__ = "game.w"
+
+            @Pre
+            @Post
+            def Alive(agent) -> bool:
+                return True
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Crew_Member(ari)
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+
+        self.assertIn("Pre</span> Alive", mmd)      # boxes showed both; lanes must too
+        self.assertIn("Post</span> Alive", mmd)
+        ids = re.findall(r'^ {4}([A-Za-z0-9_]+)[\["{(]', mmd, re.MULTILINE)
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_a_deleted_record_leaves_no_stale_value(self) -> None:
+        class Holder(Tag):
+            __module__ = "game.w"
+
+            @Record
+            def weapon(agent):
+                return object()
+        ari = Hero()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Holder(ari)
+        del ari.weapon
+        (text,) = Diagram(ari, live=True).values()
+
+        self.assertIn("Record</span> weapon", text)  # the declaration stays
+        self.assertNotIn("weapon = ", text)         # its removed value does not
 
     def test_mermaid_lanes_escape_entity_looking_text(self) -> None:
         class T(Tag):

@@ -419,7 +419,7 @@ class _Graph:
 
                         after = held(tag, member.name)
 
-                        if after is _MISSING:
+                        if after is _MISSING or member.name not in namespace:
                             continue
 
                         prior = before.get(member.name, _MISSING)
@@ -992,6 +992,7 @@ class _LaneColumn:
     fields: tuple[str, ...] = ()  # host field texts, with values when live
     lines: tuple[tuple[str, _Line], ...] = ()   # Tag rows, with their declarations
     words: dict[str, list[str]] = field(default_factory=dict)  # row → ↳ relation words
+    rows_of: dict[str, str] = field(default_factory=dict)  # overlaid member name → its row
 
 
 def _lane_rows(
@@ -1072,8 +1073,15 @@ def _lane_columns(
         cells: dict[str, str] = {}
         member_lines: list[tuple[str, _Line]] = []
         tints: dict[str, str] = {}
+        words: dict[str, list[str]] = {}
+        rows_of: dict[str, str] = {}
 
         for index, (member, line) in enumerate(zip(graph.members[tag], _lines(graph, tag, notes))):
+            row = member.name
+            suffix = 1
+            while row in cells:      # a Tag may declare one name twice (Pre and Post)
+                suffix += 1
+                row = f"{member.name} ({suffix})"
             kind = _html(line.kind)
             color = _LANE_RIPPED if is_ripped else _COLORS[_FAMILY[line.kind]]
             text_color = _LANE_RIPPED if is_ripped else _LANE_TEXT
@@ -1089,22 +1097,24 @@ def _lane_columns(
                         f' <FONT COLOR="{_LANE_GRID}" POINT-SIZE="8"><I>'
                         + _html("; ".join(line.extras)) + "</I></FONT>"
                         )
-            if (tag, member.name) in layering_words:
+            if member.kind in _OVERLAID and (tag, member.name) in layering_words:
                 html += (
                         f' <FONT COLOR="{_LANE_GRID}" POINT-SIZE="8"><I>'
                         + _html("; ".join(layering_words[tag, member.name]))
                         + "</I></FONT>"
                         )
+                words[row] = layering_words[tag, member.name]
 
-            cells[member.name] = html
-            member_lines.append((member.name, line))
-            tints[member.name] = "#f1f5f9" if is_ripped else _lane_tint(color)
+            cells[row] = html
+            member_lines.append((row, line))
+            tints[row] = "#f1f5f9" if is_ripped else _lane_tint(color)
+            if member.kind in _OVERLAID and member.name not in rows_of:
+                rows_of[member.name] = row
 
         columns.append(_LaneColumn(
                 column_ids[tag], title, cells, tints,
                 key=tag, ripped=is_ripped, lines=tuple(member_lines),
-                words={row: words for (owner, row), words in layering_words.items()
-                       if owner is tag},
+                words=words, rows_of=rows_of,
                 ))
 
     return columns, _lane_rows(graph, columns, fields)
@@ -1173,7 +1183,6 @@ def _graphviz_lanes(
     ports = _lane_ports(rows)
     widths = {column.id: _lane_width(column) for column in columns}
     ids = [column.id for column in columns]
-    column_of = {column.key: column.id for column in columns}
     lines = [
             f"digraph {_quoted(name or graph.host)} {{",
             f'  graph [rankdir=TB, splines=line, nodesep=0.18, ranksep=0.5, '
@@ -1195,14 +1204,17 @@ def _graphviz_lanes(
     lines.append("  // layering: earlier member to later member, same row")
 
     for (prior, tag, relation), names in _layerings(graph, part).items():
-        port = ports[names[0]]
         color = _LINK_COLORS[relation]
         head = "normal" if relation == "underlay" else "tee"
-        lines.append(
-                f"  {column_of[prior]}:{port}:e -> {column_of[tag]}:{port}:w "
-                f"[constraint=false, style=dashed, penwidth=2.2, arrowsize=1, "
-                f'color="{color}", arrowhead={head}];'
-                )
+        source = next(c for c in columns if c.key is prior)
+        target = next(c for c in columns if c.key is tag)
+        for name in names:           # one arrow per shared member, same row
+            port = ports[source.rows_of.get(name, name)]
+            lines.append(
+                    f"  {source.id}:{port}:e -> {target.id}:{port}:w "
+                    f"[constraint=false, style=dashed, penwidth=2.2, arrowsize=1, "
+                    f'color="{color}", arrowhead={head}];'
+                    )
 
     lines.append("}")
     return "\n".join(lines) + "\n"
@@ -1425,12 +1437,16 @@ def _mermaid_lanes(
         lines.append("  end")
 
     for (prior, tag, relation), names in _layerings(graph, part).items():
-        source = assigned[next(c for c in columns if c.key is prior).id, names[0]]
-        target = assigned[next(c for c in columns if c.key is tag).id, names[0]]
+        source = next(c for c in columns if c.key is prior)
+        target = next(c for c in columns if c.key is tag)
         head = "-.->" if relation == "underlay" else "-.-x"
-        lines.append(f"  {source} {head} {target}")
-        painted.setdefault(relation, []).append(count)
-        count += 1
+        for name in names:           # one arrow per shared member, same row
+            lines.append(
+                    f"  {assigned[source.id, source.rows_of.get(name, name)]}"
+                    f" {head} {assigned[target.id, target.rows_of.get(name, name)]}"
+                    )
+            painted.setdefault(relation, []).append(count)
+            count += 1
 
     lines.extend(
             f"  classDef {look} {style}"
