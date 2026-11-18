@@ -787,7 +787,7 @@ def _mermaid(
     for (prior, tag, relation), names in _layerings(graph, part).items():
         head = "-.->" if relation == "underlay" else "-.-x"
         label = _text(f"{relation} {', '.join(names)}")
-        lines.append(f"  {ids[prior]} {head}|{label}| {ids[tag]}")
+        lines.append(f'  {ids[prior]} {head}|"{label}"| {ids[tag]}')
         painted.setdefault(relation, []).append(count)
         count += 1
 
@@ -816,7 +816,9 @@ def _html(
 def _quoted(
         text: str,
         ) -> str:
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
+    # NUL and friends break dot's scanner inside quoted strings.
+    cleaned = "".join(_CONTROL.get(c, c) for c in text)
+    return '"' + cleaned.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
 
 
 def _table(
@@ -854,7 +856,7 @@ def _graphviz(
     if graph.has_host:
         title = _html(graph.host) + (f"<BR/>{small.format(_html(name))}" if name else "")
         rows = [
-                (f"f{i}", small.format(tint.format("#475569", _html(field))))
+                (f"f{i}", small.format(tint.format("#475569", _html(field) or "&nbsp;")))
                 for i, field in enumerate(graph.fields)
                 ]
         lines.append(f"  host [label={_table(title, rows)}, {_DOT_LOOKS['host']}];")
@@ -936,9 +938,13 @@ def _lane_port(
     is one, else a deterministic safe id (Graphviz splits quoted ports at
     ``:`` and mis-decodes ``\\``). The table cell uses the same id."""
 
-    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+    if name not in _DOT_PORT_RESERVED and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
         return name
     return "p" + name.encode("utf-8").hex()
+
+
+# Words dot's scanner owns, which cannot be a port even as an identifier.
+_DOT_PORT_RESERVED = frozenset(("digraph", "graph", "node", "edge", "subgraph", "strict"))
 
 
 def _lane_tint(
@@ -1047,7 +1053,7 @@ def _lane_columns(
             color = _LANE_RIPPED if is_ripped else _COLORS[_FAMILY[line.kind]]
             text_color = _LANE_RIPPED if is_ripped else _LANE_TEXT
             html = f'<FONT COLOR="{color}" POINT-SIZE="9"><B>{kind}</B></FONT>'
-            html += f' <FONT COLOR="{text_color}" POINT-SIZE="10">{_html(line.text)}</FONT>'
+            html += f' <FONT COLOR="{text_color}" POINT-SIZE="10">{_html(line.text) or "&nbsp;"}</FONT>'
 
             if line.holds is False:
                 html += f' <FONT COLOR="#ef4444"><B>✗ BROKEN</B></FONT>'

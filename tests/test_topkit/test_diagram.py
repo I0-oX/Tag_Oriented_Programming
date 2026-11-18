@@ -42,7 +42,7 @@ def _plain(title: str) -> str:
 def _boxes(text: str) -> dict[str, str]:
     """Mermaid box id → the plain text it shows, with lines by newline."""
 
-    labels = re.findall(r'^\s+(host|t\d+)[^"]*"(.*?)"[^"]*$', text, re.MULTILINE)
+    labels = re.findall(r'^\s+(host|t\d+)[({>][^"]*"(.*?)"[^"]*$', text, re.MULTILINE)
     return {box: re.sub(r"<[^>]*>", "", label.replace("<br>", "\n")) for box, label in labels}
 
 
@@ -78,7 +78,7 @@ def _named(text: str) -> set[tuple[str, str, str]]:
 def _arrows(text: str) -> list[tuple[str, str, str]]:
     """(source, label, shape) for each Mermaid lane arrow; solid is ""."""
 
-    return re.findall(r"^  (\w+) (?:-->|-\.->\|(\w+)\|) (\w+)$", text, re.MULTILINE)
+    return re.findall(r'^  (\w+) (?:-->|-\.->\|"?(.*?)"?\|) (\w+)$', text, re.MULTILINE)
 
 
 def _titles(dot: str) -> dict[str, str]:
@@ -94,7 +94,7 @@ def _dot_arrows(dot: str) -> list[tuple[str, str, str]]:
     return [
             (a, label, b)
             for a, b, label in re.findall(
-                    r'^  (\w+) -> (\w+)(?: \[style=dashed, label=" (\w+) "\])?;$', dot, re.MULTILINE,
+                    r'^  (\w+) -> (\w+)(?: \[[^\]]*?label=" (.*?) "\])?;$', dot, re.MULTILINE,
                     )
             ]
 
@@ -151,6 +151,7 @@ class DiagramTests(unittest.TestCase):
                 ("Right", "", "Bridge"),
                 ("Agent", "", "Person"),
                 ("Person", "", "Elf"),
+                ("Person", "underlay Attack", "Elf"),
                 }
 
         (text,) = Diagram(ari).values()
@@ -215,8 +216,8 @@ class DiagramTests(unittest.TestCase):
         self.assertIn("① Kin", titles)
         self.assertIn("② Mage", titles)
         self.assertIn(">① Kin</TD>", dot)
-        self.assertIn("|underlay spells|", text)
-        self.assertIn("|replaces Greet|", text)
+        self.assertIn('|"underlay spells"|', text)
+        self.assertIn('|"replaces Greet"|', text)
         self.assertIn('label=" replaces Greet "', dot)
 
     def test_the_general_view_checks_no_post_and_marks_nothing_broken(self) -> None:
@@ -383,8 +384,8 @@ class DiagramTests(unittest.TestCase):
         mermaid_names = {box: title for title, box in boxes.items()}
         graphviz_names = {node: title for title, node in ids.items()}
 
-        underlay = f"  {boxes['Kin']} -.->|underlay spells| {boxes['Mage']}"
-        replaces = f"  {boxes['Kin']} -.-x|replaces Greet| {boxes['Mage']}"
+        underlay = f'  {boxes["Kin"]} -.->|"underlay spells"| {boxes["Mage"]}'
+        replaces = f'  {boxes["Kin"]} -.-x|"replaces Greet"| {boxes["Mage"]}'
         self.assertIn(underlay, text)
         self.assertIn(replaces, text)
         links = [
@@ -421,7 +422,7 @@ class DiagramTests(unittest.TestCase):
                 }
         self.assertEqual(
                 {
-                    (mermaid_names[a], label, mermaid_names[b])
+                    (mermaid_names[a], label.strip('"'), mermaid_names[b])
                     for a, label, b in re.findall(
                             r"^  (\w+) (?:-\.->|-\.-x)\|(.*?)\| (\w+)$", text, re.MULTILINE)
                     },
@@ -646,7 +647,8 @@ class DiagramTests(unittest.TestCase):
         self.assertNotIn("host", boxes)
         self.assertEqual(
                 _named(text),
-                {("Person", "", "Elf"), ("Elf", "", "Hero_Tag"), ("Hero_Tag", "pins", "Rare · Pin")},
+                {("Person", "", "Elf"), ("Elf", "", "Hero_Tag"), ("Hero_Tag", "pins", "Rare · Pin"),
+                 ("Person", "underlay Attack", "Elf")},
                 )
         self.assertEqual(_kinds(labels["Rare · Pin"]), ["Record rarity"])
         self.assertIn(f"  class {by_title['Rare · Pin']} pin", text)
