@@ -1334,6 +1334,9 @@ def _mermaid_lanes(
             "    nodeSpacing: 18",
             "    rankSpacing: 22",
             "    padding: 6",
+            "  themeVariables:",
+            "    clusterBkg: transparent",
+            '    clusterBorder: "#94a3b8"',
             "---",
             "swimlane-beta TD",
             ]
