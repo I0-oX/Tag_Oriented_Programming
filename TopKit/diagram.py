@@ -939,7 +939,8 @@ def _lane_port(
         ) -> str:
     """A declaration's name as a Graphviz port: a plain identifier when it
     is one, else a deterministic safe id (Graphviz splits quoted ports at
-    ``:`` and mis-decodes ``\\``). The table cell uses the same id."""
+    ``:`` and mis-decodes ``\\``). The cell and the edge use one id, through
+    ``_lane_ports``, which keeps two names from sharing a port."""
 
     if name not in _DOT_PORT_RESERVED and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
         return name
@@ -949,6 +950,25 @@ def _lane_port(
 # Words dot's scanner owns, which cannot be a port even as an identifier.
 _DOT_PORT_RESERVED = frozenset(("digraph", "graph", "node", "edge", "subgraph", "strict"))
 
+
+def _lane_ports(
+        rows: list[str],
+        ) -> dict[str, str]:
+    """An injective port per row name: ``a:b`` hexes to ``p613a62`` and a
+    row literally named that keeps the plain form, so the later row is
+    suffixed until it is unique."""
+
+    ports: dict[str, str] = {}
+    taken: set[str] = set()
+
+    for name in rows:
+        port = _lane_port(name)
+        while port in taken:
+            port += "_"
+        taken.add(port)
+        ports[name] = port
+
+    return ports
 
 def _lane_tint(
         color: str,
@@ -1094,6 +1114,7 @@ def _lane_table(
         column: _LaneColumn,
         rows: list[str],
         width: int,
+        ports: dict[str, str],
         ) -> str:
     """One HTML-table node per column: a title, a rule, then one fixed-height
     cell for every global row, blank where the Tag does not declare it."""
@@ -1113,7 +1134,7 @@ def _lane_table(
 
         if name in column.cells:
             body.append(
-                    f'<TR><TD PORT="{_lane_port(name)}" {height} '
+                    f'<TR><TD PORT="{ports[name]}" {height} '
                     f'BGCOLOR="{column.tints.get(name, "#ffffff")}">{column.cells[name]}</TD></TR>'
                     )
         else:
@@ -1149,6 +1170,7 @@ def _graphviz_lanes(
 
     notes = _notes(graph, part, every=False)
     columns, rows = _lane_columns(graph, part, notes)
+    ports = _lane_ports(rows)
     widths = {column.id: _lane_width(column) for column in columns}
     ids = [column.id for column in columns]
     column_of = {column.key: column.id for column in columns}
@@ -1167,13 +1189,13 @@ def _graphviz_lanes(
     lines.append("")
 
     for column in columns:
-        lines.append(f"  {column.id} [label={_lane_table(column, rows, widths[column.id])}];")
+        lines.append(f"  {column.id} [label={_lane_table(column, rows, widths[column.id], ports)}];")
 
     lines.append("")
     lines.append("  // layering: earlier member to later member, same row")
 
     for (prior, tag, relation), names in _layerings(graph, part).items():
-        port = _lane_port(names[0])
+        port = ports[names[0]]
         color = _LINK_COLORS[relation]
         head = "normal" if relation == "underlay" else "tee"
         lines.append(
@@ -1307,6 +1329,16 @@ def _mermaid_lanes(
     used: set[str] = set()
     count = 0                       # Mermaid numbers every edge, even plain ones
     painted: dict[str, list[int]] = {}
+    taken: set[str] = set()          # no two nodes in a chart share an id
+    assigned: dict[tuple[str, str], str] = {}
+
+    def swim(column: _LaneColumn, name: str) -> str:
+        node = _swim_node(column, name)
+        while node in taken:
+            node += "_"
+        taken.add(node)
+        assigned[column.id, name] = node
+        return node
 
     for column in columns:
         lines.append(f'  subgraph {column.id}["{_text(column.title) or " "}"]')
@@ -1318,7 +1350,7 @@ def _mermaid_lanes(
 
         for row in rows:                 # source order is the global row order
             if row in fields:
-                node = _swim_node(column, row)
+                node = swim(column, row)
                 lines.append(f'    {node}["{_text(fields[row].replace(" = ", ": ", 1)) or " "}"]')
                 nodes.append(node)
                 continue
@@ -1351,7 +1383,7 @@ def _mermaid_lanes(
                         "<br/><span style='color:#94a3b8'><i>"
                         + _text(word) + "</i></span>"
                         )
-            node = _swim_node(column, row)
+            node = swim(column, row)
 
             opening, closing = _SWIM_SHAPES[family]
             lines.append(f"    {node}{opening}\"{label}\"{closing}")
@@ -1363,7 +1395,7 @@ def _mermaid_lanes(
                 hanging.append((node, items))
 
         if not nodes:               # a Tag with no declarations still gets a column
-            node = f"{column.id}_empty"
+            node = swim(column, "empty")
             pad = "#nbsp;" * max(len(column.title), 6)
             lines.append(f'    {node}["{pad}"]')
             nodes.append(node)
@@ -1372,6 +1404,9 @@ def _mermaid_lanes(
         for parent, items in hanging:
             for index, item in enumerate(items):
                 extra = f"{parent}_i{index}"
+                while extra in taken:      # a member may already own this id
+                    extra += "_"
+                taken.add(extra)
                 lines.append(f'    {extra}["{_text(item)}"]')
                 lines.append(f"    {parent} ---|+| {extra}")
                 count += 1
@@ -1390,8 +1425,8 @@ def _mermaid_lanes(
         lines.append("  end")
 
     for (prior, tag, relation), names in _layerings(graph, part).items():
-        source = _swim_node(next(c for c in columns if c.key is prior), names[0])
-        target = _swim_node(next(c for c in columns if c.key is tag), names[0])
+        source = assigned[next(c for c in columns if c.key is prior).id, names[0]]
+        target = assigned[next(c for c in columns if c.key is tag).id, names[0]]
         head = "-.->" if relation == "underlay" else "-.-x"
         lines.append(f"  {source} {head} {target}")
         painted.setdefault(relation, []).append(count)

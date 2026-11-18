@@ -1297,6 +1297,44 @@ class LanesTests(unittest.TestCase):
             self.assertIn(f't0:{port}:e -> t1:{port}:w', dot)
             self.assertIn(f'PORT="{port}"', dot)
 
+    def test_colliding_names_keep_their_own_nodes_and_ports(self) -> None:
+        def rec(name, stored=False):
+            def f(agent, prior=None):
+                if stored:
+                    return (prior or []) + ["it"]
+                return ["x"] if name == "spells" else 1
+            f.__name__ = name
+            return Record(f)
+        Base = type("Base", (Tag,), {"__module__": "game.w", "spells": rec("spells")})
+        More = type("More", (Tag,), {
+                "__module__": "game.w",
+                "spells": rec("spells", True),      # its item is t1_spells_i0
+                "spells_i0": rec("spells_i0"),      # the same id before the fix
+                "a-b": rec("a-b"),                  # slugs like a_b
+                "a_b": rec("a_b"),
+                })
+        ari = Hero()
+        setattr(ari, "a:b", 1)                      # hexes to p613a62
+        setattr(ari, "p613a62", 2)                  # the plain form of that
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            Base(ari)
+            More(ari)
+
+        (mmd,) = Diagram(ari, live=True, layout="lanes").values()
+        ids = re.findall(r'^ {4}([A-Za-z0-9_]+)[\["{(]', mmd, re.MULTILINE)
+        self.assertEqual(len(ids), len(set(ids)))   # every node its own id
+        self.assertIn("t1_a_b", ids)                # a-b and a_b stay two nodes
+        self.assertIn("t1_a_b_", ids)
+        self.assertIn("t1_spells ---|+| t1_spells_i0_", mmd)   # not the member's id
+
+        (dot,) = Diagram(ari, live=True, format="graphviz", layout="lanes").values()
+        for node, table in re.findall(r'^  (\w+) \[label=<<TABLE(.*?)>>\];$', dot, re.MULTILINE | re.DOTALL):
+            ports = [p for p in re.findall(r'PORT="([^"]+)"', table) if p != "title"]
+            self.assertEqual(len(ports), len(set(ports)), node)
+        self.assertIn('PORT="p613a62_"', dot)       # the literal name, disambiguated
+        self.assertIn('PORT="p613a62"', dot)
+
     def test_mermaid_lanes_escape_entity_looking_text(self) -> None:
         class T(Tag):
             @Record
