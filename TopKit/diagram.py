@@ -741,6 +741,7 @@ def _mermaid(
     # not break mid-phrase. GitHub honours this front matter.
     lines = ["---", "config:", "  flowchart:", "    wrappingWidth: 360", "---", f"flowchart {direction}"]
     classes = []
+    used: set[str] = set()
 
     if graph.has_host:
         # The part's name in the box, not a title: not every renderer
@@ -749,6 +750,7 @@ def _mermaid(
         fields = [_text(field) for field in graph.fields]
         lines.append(f'  host(["{"<br>".join([*head, *(["─" * 14, *fields] if fields else [])])}"])')
         classes.append("  class host host")
+        used.add("host")
 
     notes = _notes(graph, part, every=False)
     modules = _by_module(part)
@@ -768,10 +770,12 @@ def _mermaid(
 
             if look:
                 classes.append(f"  class {ids[tag]} {look}")
+                used.add(look)
 
         if boxed:
             lines.append("  end")
             classes.append(f"  class m{number} module")
+            used.add("module")
 
     drawn = set(part)
     count = 0                                  # Mermaid numbers its links
@@ -791,7 +795,6 @@ def _mermaid(
         painted.setdefault(relation, []).append(count)
         count += 1
 
-    used = {line.rsplit(" ", 1)[1] for line in classes}
     lines.extend(
             f"  classDef {look} {style}"
             for look, style in _MERMAID_STYLES.items()
@@ -1001,9 +1004,10 @@ def _lane_columns(
     """The columns in Overlay order, Ripped Tags last, with their rows.
     Both formats use this one list, so their columns say the same things."""
 
+    place = {tag: number for number, tag in enumerate(part)}
     ordered = sorted(
             (tag for tag in part if tag not in graph.ripped),
-            key=lambda tag: (graph.layers.get(tag, len(part) + 1), tag.__name__),
+            key=lambda tag: (graph.layers.get(tag, len(part) + 1), place[tag]),
             )
     ripped = sorted(
             (tag for tag in part if tag in graph.ripped),
@@ -1028,6 +1032,7 @@ def _lane_columns(
                     )
 
         columns.append(_LaneColumn("host", graph.host, cells, {}, fields=tuple(fields)))
+    column_ids = {tag: f"t{i}" for i, tag in enumerate(graph.tags)}
 
     for tag in [*ordered, *ripped]:
         is_ripped = tag in graph.ripped
@@ -1076,7 +1081,7 @@ def _lane_columns(
             tints[member.name] = "#f1f5f9" if is_ripped else _lane_tint(color)
 
         columns.append(_LaneColumn(
-                f"t{graph.tags.index(tag)}", title, cells, tints,
+                column_ids[tag], title, cells, tints,
                 key=tag, ripped=is_ripped, lines=tuple(member_lines),
                 words={row: words for (owner, row), words in layering_words.items()
                        if owner is tag},
@@ -1146,6 +1151,7 @@ def _graphviz_lanes(
     columns, rows = _lane_columns(graph, part, notes)
     widths = {column.id: _lane_width(column) for column in columns}
     ids = [column.id for column in columns]
+    column_of = {column.key: column.id for column in columns}
     lines = [
             f"digraph {_quoted(name or graph.host)} {{",
             f'  graph [rankdir=TB, splines=line, nodesep=0.18, ranksep=0.5, '
@@ -1171,7 +1177,7 @@ def _graphviz_lanes(
         color = _LINK_COLORS[relation]
         head = "normal" if relation == "underlay" else "tee"
         lines.append(
-                f"  t{graph.tags.index(prior)}:{port}:e -> t{graph.tags.index(tag)}:{port}:w "
+                f"  {column_of[prior]}:{port}:e -> {column_of[tag]}:{port}:w "
                 f"[constraint=false, style=dashed, penwidth=2.2, arrowsize=1, "
                 f'color="{color}", arrowhead={head}];'
                 )
@@ -1298,6 +1304,7 @@ def _mermaid_lanes(
             "swimlane-beta TD",
             ]
     classes: list[str] = []
+    used: set[str] = set()
     count = 0                       # Mermaid numbers every edge, even plain ones
     painted: dict[str, list[int]] = {}
 
@@ -1374,8 +1381,12 @@ def _mermaid_lanes(
                 )
         if look == "broken":          # only the Post that fails owns the verdict
             look = None
-        classes.extend(f"  class {node} {look}" for node in nodes if look)
-        classes.extend(f"  class {node} broken" for node in broken)
+        if look:
+            classes.extend(f"  class {node} {look}" for node in nodes)
+            used.add(look)
+        if broken:
+            classes.extend(f"  class {node} broken" for node in broken)
+            used.add("broken")
         lines.append("  end")
 
     for (prior, tag, relation), names in _layerings(graph, part).items():
@@ -1386,7 +1397,6 @@ def _mermaid_lanes(
         painted.setdefault(relation, []).append(count)
         count += 1
 
-    used = {line.rsplit(" ", 1)[1] for line in classes}
     lines.extend(
             f"  classDef {look} {style}"
             for look, style in _MERMAID_STYLES.items()
@@ -1411,6 +1421,7 @@ _LANES = {
         "graphviz": (_graphviz_lanes, ".dot"),
         }
 _LAYOUTS = ("boxes", "lanes")
+_DIRECTIONS = ("TD", "TB", "BT", "LR", "RL")
 _IMAGES = ("svg", "png")
 
 
@@ -1422,6 +1433,9 @@ def _check_layout(
 
     if layout not in _LAYOUTS:
         raise ValueError(f"layout is one of {', '.join(_LAYOUTS)}")
+
+    if direction not in _DIRECTIONS:
+        raise ValueError(f"direction is one of {', '.join(_DIRECTIONS)}")
 
     if layout == "lanes" and direction != "TD":
         raise ValueError("lanes are always columns; direction only applies to layout='boxes'")

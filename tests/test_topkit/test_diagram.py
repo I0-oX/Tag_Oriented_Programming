@@ -993,6 +993,41 @@ class LanesTests(unittest.TestCase):
 
             self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
 
+    def test_an_unknown_direction_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "TD, TB, BT, LR, RL"):
+            Diagram(_mage(), direction="ltr")
+
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError):
+                Save(_mage(), pathlib.Path(folder) / "ari", direction="wide")
+
+            self.assertEqual(list(pathlib.Path(folder).iterdir()), [])
+
+        for good in ("TD", "TB", "BT", "LR", "RL"):
+            self.assertTrue(Diagram(_mage(), direction=good))
+
+    def test_a_form_draws_lanes_in_form_order(self) -> None:
+        class Rare(Pin):
+            @Record
+            def rarity(tag) -> str:
+                return "rare"
+
+        class Hero_Tag(Elf):
+            pass
+        Rare(Hero_Tag)
+        (mmd,) = Diagram(Hero_Tag, layout="lanes").values()
+
+        columns = _swim_columns(mmd)
+        self.assertEqual([title for _, title in columns],
+                         ["Person", "Elf · on Person", "Hero_Tag · on Elf", "Rare · Pin"])
+
+        links = _swim_links(mmd)
+        self.assertEqual(len(links), 1)
+        places = {cid: place for place, (cid, _) in enumerate(columns)}
+        column = lambda node: next(cid for cid, _ in columns if node.startswith(cid + "_"))
+        self.assertLess(places[column(links[0][0])], places[column(links[0][2])])
+                # the layering runs left to right, earlier Tag first
+
     def test_an_unknown_layout_names_both_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "boxes.*lanes"):
             Diagram(_mage(), layout="cards")
